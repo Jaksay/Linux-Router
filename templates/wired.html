@@ -1,0 +1,53 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "有线网络 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>有线</span></h2>
+  <p class="muted">查看当前有线网络的状态</p>
+</section>
+
+<section class="card-grid">
+  {% if wired.devices %}
+    {% for item in wired.devices %}
+    <article class="card wired-card">
+      <div class="card-header-row">
+        <h3 class="card-title card-primary-heading">{{ icon("network") }}<span class="mono-value">{{ item.device }}</span></h3>
+      </div>
+      <dl class="key-value">
+        <div><dt>状态</dt><dd class="wired-state-text {{ 'wired-state-connected' if item.state == 'connected' else 'wired-state-disconnected' if item.state == 'disconnected' else '' }}">{{ item.state_label }}</dd></div>
+        <div><dt>配置</dt><dd>{{ item.profile.name or '未创建' }}</dd></div>
+        <div><dt>模式</dt><dd>DHCP 自动获取</dd></div>
+        <div><dt>MAC</dt><dd class="mono-value">{{ item.details.mac or '未知' }}</dd></div>
+        <div>
+          <dt>当前 IP</dt>
+          <dd class="mono-value">
+            {% if item.details.ipv4 %}
+              {% for address in item.details.ipv4 %}{{ address.split('/', 1)[0] }}{% if not loop.last %}, {% endif %}{% endfor %}
+            {% else %}
+              无
+            {% endif %}
+          </dd>
+        </div>
+        <div><dt>当前网关</dt><dd class="mono-value">{{ item.details.gateway or '无' }}</dd></div>
+        <div><dt>当前 DNS</dt><dd class="mono-value">{{ item.details.dns|join(', ') if item.details.dns else '无' }}</dd></div>
+      </dl>
+    </article>
+    {% endfor %}
+  {% else %}
+    <article class="card card-wide">
+      <h3 class="card-title">{{ icon("ethernet-port") }}<span>有线接口</span></h3>
+      <p class="muted">当前没有检测到有线网络接口</p>
+    </article>
+  {% endif %}
+
+  {% if wired.errors %}
+    <article class="card card-wide">
+      <h3 class="card-title">{{ icon("server") }}<span>读取异常</span></h3>
+      {% for error in wired.errors %}
+        <p class="alert compact">{{ error }}</p>
+      {% endfor %}
+    </article>
+  {% endif %}
+</section>
+{% endblock %}

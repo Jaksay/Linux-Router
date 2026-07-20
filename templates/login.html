@@ -1,0 +1,23 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% block extra_toasts %}
+  {% if error %}
+  <div class="toast toast-error" data-auto-hide="4000">
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+{% endblock %}
+{% block auth_content %}
+<main class="login-page">
+  <section class="login-card">
+    <h1 class="auth-title">{{ icon("log-in", 20) }}<span>管理员登录</span></h1>
+    <form method="post" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <input type="password" name="password" placeholder="请输入密码" required>
+      </label>
+      <button type="submit" class="icon-button">{{ icon("log-in") }}<span>登录</span></button>
+    </form>
+  </section>
+</main>
+{% endblock %}

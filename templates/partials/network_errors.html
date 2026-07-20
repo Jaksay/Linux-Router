@@ -1,0 +1,9 @@
+{% from "macros.html" import icon %}
+    {% if status.errors %}
+    <article class="card card-wide">
+      <h3 class="card-title">{{ icon("server") }}<span>读取异常</span></h3>
+      {% for error in status.errors %}
+        <p class="alert compact">{{ error }}</p>
+      {% endfor %}
+    </article>
+    {% endif %}

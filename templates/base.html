@@ -1,0 +1,178 @@
+{% from "macros.html" import icon %}
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title or "Linux Router" }}</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico', v='20260720-1') }}" sizes="any">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260718-92') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='responsive.css', v='20260718-13') }}">
+  </head>
+  <body>
+    {% set flashes = get_flashed_messages(with_categories=true) %}
+    <section class="toast-stack" id="global-toast-stack" aria-live="polite" aria-atomic="true">
+      {% for category, message in flashes %}
+      <div class="toast {{ 'toast-success' if category == 'success' else 'toast-error' }}" data-auto-hide="{{ 2500 if category == 'success' else 4000 }}">
+        <span>{{ message }}</span>
+      </div>
+      {% endfor %}
+      {% block extra_toasts %}{% endblock %}
+    </section>
+    {% if session.get("logged_in") %}
+    <div class="app-shell">
+      <header class="mobile-topbar">
+        <button type="button" class="mobile-menu-button" id="mobile-menu-button" aria-label="打开菜单" aria-controls="app-sidebar" aria-expanded="false">{{ icon("menu", 20) }}</button>
+        <a href="{{ url_for('system_info') }}" class="brand-title"><span>Linux Router</span></a>
+      </header>
+      <aside class="sidebar" id="app-sidebar">
+        <div class="sidebar-main">
+          <div class="sidebar-brand-row">
+            <h1><a href="{{ url_for('system_info') }}" class="brand-title"><span>Linux Router</span></a></h1>
+            <button type="button" class="modal-close-button drawer-close-button" id="drawer-close-button" aria-label="关闭菜单">{{ icon("x", 18) }}</button>
+          </div>
+          <nav class="nav-links">
+            <a href="{{ url_for('system_info') }}" class="{{ 'active' if current_path == url_for('system_info') else '' }}" aria-current="{{ 'page' if current_path == url_for('system_info') else 'false' }}">{{ icon("monitor") }}<span>概览</span></a>
+            <a href="{{ url_for('dependencies_page') }}" class="{{ 'active' if current_path == url_for('dependencies_page') else '' }}" aria-current="{{ 'page' if current_path == url_for('dependencies_page') else 'false' }}">{{ icon("package") }}<span>依赖</span></a>
+            <a href="{{ url_for('wired_network') }}" class="{{ 'active' if current_path == url_for('wired_network') else '' }}" aria-current="{{ 'page' if current_path == url_for('wired_network') else 'false' }}">{{ icon("ethernet-port") }}<span>有线</span></a>
+            <a href="{{ url_for('wifi_page') }}" class="{{ 'active' if current_path == url_for('wifi_page') else '' }}" aria-current="{{ 'page' if current_path == url_for('wifi_page') else 'false' }}">{{ icon("wifi") }}<span>无线</span></a>
+            <a href="{{ url_for('hotspot_page') }}" class="{{ 'active' if current_path == url_for('hotspot_page') else '' }}" aria-current="{{ 'page' if current_path == url_for('hotspot_page') else 'false' }}">{{ icon("radio-tower") }}<span>热点</span></a>
+            <a href="{{ url_for('tools_page') }}" class="{{ 'active' if current_path == url_for('tools_page') else '' }}" aria-current="{{ 'page' if current_path == url_for('tools_page') else 'false' }}">{{ icon("wrench") }}<span>工具</span></a>
+            <a href="{{ url_for('hotspot_clients_page') }}" class="{{ 'active' if current_path == url_for('hotspot_clients_page') else '' }}" aria-current="{{ 'page' if current_path == url_for('hotspot_clients_page') else 'false' }}">{{ icon("smartphone") }}<span>设备</span></a>
+            <a href="{{ url_for('system_settings') }}" class="{{ 'active' if current_path == url_for('system_settings') else '' }}" aria-current="{{ 'page' if current_path == url_for('system_settings') else 'false' }}">{{ icon("settings") }}<span>设置</span></a>
+          </nav>
+        </div>
+        <div class="sidebar-footer">
+          <p class="muted account-text">{{ icon("user-round", 14, "account-icon") }}<span>{{ session.get("username") }}</span></p>
+          <form action="{{ url_for('logout') }}" method="post" class="logout-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="logout-button" title="退出登录" aria-label="退出登录">{{ icon("log-out", 16) }}</button>
+          </form>
+        </div>
+      </aside>
+      <button type="button" class="mobile-nav-backdrop" id="mobile-nav-backdrop" aria-label="关闭菜单" tabindex="-1"></button>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    {% else %}
+      {% block auth_content %}{% endblock %}
+    {% endif %}
+    <script src="{{ url_for('static', filename='router-common.js', v='20260718-3') }}"></script>
+    <script>
+      (() => {
+        const stack = document.getElementById("global-toast-stack");
+        const activeToasts = new Map();
+
+        const removeToast = (element) => {
+          if (!element) return;
+          const key = element.dataset.key || "";
+          if (key && activeToasts.get(key) === element) {
+            activeToasts.delete(key);
+          }
+          element.remove();
+        };
+
+        const scheduleDismiss = (element, delay) => {
+          if (!element || !delay || delay <= 0) return;
+          window.setTimeout(() => {
+            removeToast(element);
+          }, delay);
+        };
+
+        window.routerToast = {
+          show(message, type = "success", options = {}) {
+            if (!stack) return null;
+            const text = String(message || "").trim();
+            if (!text) {
+              if (options.key) {
+                this.clear(options.key);
+              }
+              return null;
+            }
+
+            const key = options.key ? String(options.key) : "";
+            if (key) {
+              const current = activeToasts.get(key);
+              if (current) {
+                removeToast(current);
+              }
+            }
+
+            const element = document.createElement("div");
+            element.className = `toast ${type === "success" ? "toast-success" : "toast-error"}`;
+            if (key) {
+              element.dataset.key = key;
+              activeToasts.set(key, element);
+            }
+
+            const content = document.createElement("span");
+            content.textContent = text;
+            element.appendChild(content);
+            stack.appendChild(element);
+
+            scheduleDismiss(element, options.autoHideMs ?? (type === "success" ? 2500 : 4000));
+            return element;
+          },
+          clear(key) {
+            const element = activeToasts.get(String(key || ""));
+            if (element) {
+              removeToast(element);
+            }
+          },
+        };
+
+        if (stack) {
+          stack.querySelectorAll(".toast").forEach((element) => {
+            scheduleDismiss(element, Number(element.dataset.autoHide || 0));
+          });
+        }
+
+        const sidebar = document.getElementById("app-sidebar");
+        const menuButton = document.getElementById("mobile-menu-button");
+        const closeButton = document.getElementById("drawer-close-button");
+        const backdrop = document.getElementById("mobile-nav-backdrop");
+        const content = document.querySelector(".content");
+        const mobileTopbar = document.querySelector(".mobile-topbar");
+        const mobileMedia = window.matchMedia("(max-width: 900px)");
+
+        const setMobileNavOpen = (open, restoreFocus = false) => {
+          if (!sidebar || !menuButton || !backdrop) return;
+          const isOpen = mobileMedia.matches && open;
+          sidebar.classList.toggle("open", isOpen);
+          backdrop.classList.toggle("open", isOpen);
+          document.body.classList.toggle("mobile-nav-open", isOpen);
+          menuButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+          sidebar.toggleAttribute("inert", mobileMedia.matches && !isOpen);
+          sidebar.setAttribute("aria-hidden", mobileMedia.matches && !isOpen ? "true" : "false");
+          content?.toggleAttribute("inert", isOpen);
+          mobileTopbar?.toggleAttribute("inert", isOpen);
+          if (isOpen) {
+            closeButton?.focus();
+          } else if (restoreFocus && mobileMedia.matches) {
+            menuButton.focus();
+          }
+        };
+
+        menuButton?.addEventListener("click", () => setMobileNavOpen(true));
+        closeButton?.addEventListener("click", () => setMobileNavOpen(false, true));
+        backdrop?.addEventListener("click", () => setMobileNavOpen(false, true));
+        sidebar?.querySelectorAll(".nav-links a").forEach((link) => {
+          link.addEventListener("click", () => setMobileNavOpen(false));
+        });
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && sidebar?.classList.contains("open")) {
+            setMobileNavOpen(false, true);
+          }
+        });
+        if (mobileMedia.addEventListener) {
+          mobileMedia.addEventListener("change", () => setMobileNavOpen(false));
+        } else {
+          mobileMedia.addListener(() => setMobileNavOpen(false));
+        }
+        setMobileNavOpen(false);
+      })();
+    </script>
+    {% block page_scripts %}{% endblock %}
+  </body>
+</html>

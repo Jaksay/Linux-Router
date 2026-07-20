@@ -1,0 +1,393 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "工具 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>工具</span></h2>
+  <p class="muted">管理路由器常用扩展工具</p>
+</section>
+
+<section class="settings-card-list tools-card-list">
+  <article class="card">
+    <h3 class="card-title">{{ icon("wrench") }}<span>Tailscale</span></h3>
+
+    {% if not tailscale.status.agent_available %}
+    {% for error in tailscale.status.errors %}
+    <p class="alert compact">{{ error }}</p>
+    {% endfor %}
+    {% elif not tailscale.status.installed %}
+    <p class="warning compact">未安装 Tailscale，请先自行安装</p>
+    <pre class="command-snippet"><code>curl -fsSL https://tailscale.com/install.sh | sh</code></pre>
+    <p class="muted compact">安装完成后刷新本页。</p>
+    {% elif tailscale.status.logged_in %}
+    <dl class="key-value">
+      <div><dt>状态</dt><dd class="mono-value">{{ tailscale.status.backend_state or "未知" }}</dd></div>
+      <div>
+        <dt>服务</dt>
+        <dd class="mono-value tailscale-service-state {{ 'tailscale-service-active' if tailscale.status.service_active else 'tailscale-service-inactive' }}">
+          {{ "active" if tailscale.status.service_active else "inactive" }}
+        </dd>
+      </div>
+      <div><dt>地址</dt><dd class="mono-value">{{ tailscale.status.tailscale_ips|join(", ") or "无" }}</dd></div>
+      <div><dt>设备名</dt><dd class="mono-value">{{ tailscale.status.self_name or "未知" }}</dd></div>
+      <div>
+        <dt>账号</dt>
+        <dd class="mono-value">
+          {% if tailscale.status.user %}
+          <a href="https://console.tailscale.com/" target="_blank" rel="noopener noreferrer" class="table-link mono-value">{{ tailscale.status.user }}</a>
+          {% else %}
+          未知
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+    <form action="{{ url_for('tailscale_logout') }}" method="post" class="inline-form tools-logout-form" id="tailscale-logout-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button-danger-outline">退出登录</button>
+    </form>
+
+    {% for error in tailscale.status.errors %}
+    <p class="alert compact">{{ error }}</p>
+    {% endfor %}
+    {% else %}
+    <form action="{{ url_for('tailscale_login') }}" method="post" class="login-form" id="tailscale-login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        是否接受 Tailnet 路由
+        <span class="checkbox-row">
+          <input
+            type="checkbox"
+            name="accept_routes"
+            value="1"
+            {% if tailscale.config.accept_routes %}checked{% endif %}
+          >
+          <span>接受</span>
+        </span>
+      </label>
+      <label>
+        发布子网路由
+        <input
+          type="text"
+          name="advertise_routes"
+          value="{{ tailscale.config.advertise_routes }}"
+          placeholder="例如 192.168.50.0/24"
+          inputmode="text"
+        >
+        <span class="muted form-hint">多个网段用英文逗号分隔，留空则不发布路由</span>
+      </label>
+      <div class="device-actions">
+        <button type="submit" class="button-info-strong">登录 Tailscale</button>
+      </div>
+    </form>
+    <p class="muted compact hidden" id="tailscale-login-link-wrap">
+      <a href="#" target="_blank" rel="noopener noreferrer" class="table-link" id="tailscale-login-link">打开 Tailscale 登录页面</a>
+    </p>
+
+    {% for error in tailscale.status.errors %}
+    <p class="alert compact">{{ error }}</p>
+    {% endfor %}
+    {% endif %}
+  </article>
+
+  <article class="card">
+    <h3 class="card-title">{{ icon("activity") }}<span>服务监控</span></h3>
+
+    <form action="{{ url_for('service_monitor_save') }}" method="post" class="login-form service-monitor-save-form" id="service-monitor-save-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="service-monitor-services">服务名称</label>
+      <div class="service-monitor-input-group">
+        <div class="service-monitor-input-row">
+          <input
+            type="text"
+            id="service-monitor-services"
+            name="services"
+            value="{{ service_monitor.config.services|join(', ') }}"
+            placeholder="例如 mosdns.service, sing-box.service"
+            inputmode="text"
+          >
+          <button type="submit" class="button-info-strong">保存服务</button>
+        </div>
+        <p class="muted form-hint">多个服务用英文逗号分隔，省略 .service 时会自动补全</p>
+      </div>
+    </form>
+
+    {% if service_monitor.status.services %}
+    <div class="table-scroll tools-table-block">
+      <table class="table service-monitor-table responsive-detail-table">
+        <thead>
+          <tr>
+            <th>服务</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for service in service_monitor.status.services %}
+          <tr>
+            <td class="mono-value" data-label="服务">{{ service.name }}</td>
+            <td data-label="状态">
+              <span class="status-badge status-{{ service.level }}">{{ service.status }}</span>
+            </td>
+            <td data-label="操作">
+              <div class="service-monitor-actions">
+              {% for action, label in [("start", "启动"), ("stop", "停止"), ("restart", "重启")] %}
+              <form action="{{ url_for('service_monitor_action') }}" method="post" class="inline-form service-monitor-action-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="service" value="{{ service.name }}">
+                <input type="hidden" name="action" value="{{ action }}">
+                <button type="submit" class="dependency-action-link">{{ label }}</button>
+              </form>
+              {% endfor %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% for error in service_monitor.status.errors %}
+    <p class="alert compact">{{ error }}</p>
+    {% endfor %}
+  </article>
+</section>
+{% endblock %}
+{% block page_scripts %}
+<script>
+  (() => {
+    const setToolsFeedback = window.routerFeedback.scoped("tools-page");
+    const tailscaleStatusUrl = "{{ url_for('tailscale_status') }}";
+    let tailscaleLoginPollTimer = null;
+    let tailscaleLoginPollDeadline = 0;
+
+    const showLoginLink = (url) => {
+      const wrap = document.getElementById("tailscale-login-link-wrap");
+      const link = document.getElementById("tailscale-login-link");
+      if (!wrap || !link) return;
+      link.href = url;
+      wrap.classList.remove("hidden");
+    };
+
+    const writeLoginWaitingPage = (loginWindow) => {
+      if (!loginWindow) return;
+      loginWindow.document.open();
+      loginWindow.document.write(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tailscale 登录</title>
+    <style>
+      :root { color-scheme: light; }
+      html, body { margin: 0; min-height: 100%; background: #ffffff; }
+      body {
+        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #111827;
+      }
+      .page {
+        box-sizing: border-box;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .panel {
+        width: min(100%, 360px);
+        text-align: center;
+      }
+      .spinner {
+        width: 44px;
+        height: 44px;
+        margin: 0 auto 18px;
+        border-radius: 999px;
+        border: 3px solid #e5e7eb;
+        border-top-color: #2563eb;
+        animation: spin 0.9s linear infinite;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 650;
+        line-height: 1.35;
+      }
+      p {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.7;
+        color: #6b7280;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <div class="spinner" aria-hidden="true"></div>
+        <h1>正在打开 Tailscale 登录</h1>
+        <p>正在重定向到登录页面，请稍候</p>
+      </section>
+    </main>
+  </body>
+</html>`);
+      loginWindow.document.close();
+    };
+
+    const stopTailscaleLoginPolling = () => {
+      if (!tailscaleLoginPollTimer) return;
+      window.clearTimeout(tailscaleLoginPollTimer);
+      tailscaleLoginPollTimer = null;
+    };
+
+    const pollTailscaleLoginStatus = async () => {
+      if (!tailscaleLoginPollDeadline || Date.now() > tailscaleLoginPollDeadline) {
+        stopTailscaleLoginPolling();
+        return;
+      }
+
+      try {
+        const response = await fetch(tailscaleStatusUrl, {
+          credentials: "same-origin",
+          headers: { "X-Requested-With": "fetch" },
+        });
+        if (response.ok) {
+          const status = await response.json();
+          if (status.logged_in) {
+            stopTailscaleLoginPolling();
+            setToolsFeedback("Tailscale 已登录，正在刷新页面", "success", 1500);
+            window.setTimeout(() => window.location.reload(), 700);
+            return;
+          }
+        }
+      } catch {
+        // Ignore transient status failures while the external login is still in progress.
+      }
+
+      tailscaleLoginPollTimer = window.setTimeout(pollTailscaleLoginStatus, 2000);
+    };
+
+    const startTailscaleLoginPolling = () => {
+      stopTailscaleLoginPolling();
+      tailscaleLoginPollDeadline = Date.now() + 2 * 60 * 1000;
+      pollTailscaleLoginStatus();
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && tailscaleLoginPollTimer) {
+        stopTailscaleLoginPolling();
+        pollTailscaleLoginStatus();
+      }
+    });
+
+    const submitTailscaleForm = async (form, button, pendingText, fallbackMessage, options = {}) => {
+      if (!form) return;
+      const originalText = button ? button.textContent : "";
+      const loginWindow = options.preopenWindow ? window.open("about:blank", "_blank") : null;
+      writeLoginWaitingPage(loginWindow);
+      if (button) {
+        button.disabled = true;
+        button.textContent = pendingText;
+      }
+      setToolsFeedback("");
+      try {
+        const data = await window.routerHttp.postForm(form.getAttribute("action"), new FormData(form));
+        if (data.login_url) {
+          if (loginWindow) {
+            loginWindow.location.href = data.login_url;
+          } else {
+            showLoginLink(data.login_url);
+          }
+          setToolsFeedback("已打开 Tailscale 登录页面，完成登录后刷新本页", "success", 2500);
+          startTailscaleLoginPolling();
+          if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+          }
+          return;
+        }
+        setToolsFeedback(data.message || "操作已完成", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+        window.setTimeout(() => window.location.reload(), data.ok ? 900 : 1600);
+      } catch {
+        if (loginWindow) {
+          loginWindow.close();
+        }
+        setToolsFeedback(fallbackMessage, "error");
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+    };
+
+    const loginForm = document.getElementById("tailscale-login-form");
+    loginForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitTailscaleForm(
+        loginForm,
+        loginForm.querySelector('button[type="submit"]'),
+        "处理中...",
+        "Tailscale 登录失败",
+        { preopenWindow: true },
+      );
+    });
+
+    const logoutForm = document.getElementById("tailscale-logout-form");
+    logoutForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitTailscaleForm(
+        logoutForm,
+        logoutForm.querySelector('button[type="submit"]'),
+        "退出中...",
+        "退出 Tailscale 登录失败",
+      );
+    });
+
+    const submitToolsForm = async (form, button, pendingText, fallbackMessage) => {
+      if (!form) return;
+      const originalText = button ? button.textContent : "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = pendingText;
+      }
+      setToolsFeedback("");
+      try {
+        const data = await window.routerHttp.postForm(form.getAttribute("action"), new FormData(form));
+        setToolsFeedback(data.message || "操作已完成", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+        window.setTimeout(() => window.location.reload(), data.ok ? 900 : 1600);
+      } catch {
+        setToolsFeedback(fallbackMessage, "error");
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+    };
+
+    const serviceSaveForm = document.getElementById("service-monitor-save-form");
+    serviceSaveForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitToolsForm(
+        serviceSaveForm,
+        serviceSaveForm.querySelector('button[type="submit"]'),
+        "保存中...",
+        "保存服务监控失败",
+      );
+    });
+
+    document.querySelectorAll(".service-monitor-action-form").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitToolsForm(
+          form,
+          form.querySelector('button[type="submit"]'),
+          "处理中...",
+          "服务操作失败",
+        );
+      });
+    });
+  })();
+</script>
+{% endblock %}

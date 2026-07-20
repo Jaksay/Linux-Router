@@ -1,0 +1,2 @@
+wlan0:wifi:connected:Home\:Lab
+eth0:ethernet:disconnected:

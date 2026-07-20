@@ -1,0 +1,13 @@
+Wiphy phy0
+	Supported interface modes:
+		 * managed
+		 * AP
+	valid interface combinations:
+		 * #{ managed } <= 1, #{ AP } <= 1, total <= 2, #channels <= 1
+	Band 1:
+		Frequencies:
+			* 2412 MHz [1] (20.0 dBm)
+			* 2462 MHz [11] (20.0 dBm)
+	Band 2:
+		Frequencies:
+			* 5745 MHz [149] (23.0 dBm)

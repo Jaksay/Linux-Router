@@ -1,0 +1,241 @@
+@media (max-width: 1050px) {
+  .card-grid,
+  .hardware-device-list,
+  .network-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  #hotspot-wireless.hotspot-device-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    align-items: center;
+    min-height: 56px;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    background: #ffffff;
+  }
+
+  .mobile-topbar .brand-title {
+    height: auto;
+    justify-self: center;
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: normal;
+  }
+
+  .mobile-menu-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    min-height: 0;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text);
+    box-shadow: none;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1200;
+    width: min(300px, 86vw);
+    height: auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 18px;
+    border-top: none;
+    border-right: 1px solid var(--line);
+    background: #f9fafb;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar-main {
+    gap: 18px;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .sidebar .drawer-close-button {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: block;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: rgba(17, 24, 39, 0.28);
+    box-shadow: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+  }
+
+  .mobile-nav-backdrop.open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  body.mobile-nav-open {
+    overflow: hidden;
+  }
+
+  .responsive-detail-table,
+  .responsive-detail-table tbody,
+  .responsive-detail-table tr,
+  .responsive-detail-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .responsive-detail-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .responsive-detail-table thead {
+    display: none;
+  }
+
+  .responsive-detail-table tr {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .responsive-detail-table tbody tr:first-child {
+    padding-top: 0;
+  }
+
+  .responsive-detail-table tbody tr:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .responsive-detail-table td {
+    display: block;
+    padding: 5px 0;
+    border-bottom: none;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .responsive-detail-table td::before {
+    display: block;
+    content: attr(data-label);
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .dependency-table td:nth-child(1),
+  .dependency-table td:nth-child(2),
+  .dependency-table td:nth-child(4),
+  .dependency-table .dependency-action-cell {
+    width: 100%;
+  }
+
+  .service-monitor-table td:nth-child(1),
+  .service-monitor-table td:nth-child(2) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .content {
+    padding: 16px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .network-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-monitor-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .service-monitor-input-row button[type="submit"] {
+    justify-self: start;
+  }
+
+  .wifi-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-panel {
+    max-height: calc(100vh - 24px);
+  }
+
+  .wifi-modal-panel {
+    height: calc(100vh - 24px);
+    height: calc(100dvh - 24px);
+  }
+
+  .wifi-modal-panel .wifi-layout {
+    grid-template-rows: minmax(140px, 1fr) auto;
+    overflow: hidden;
+  }
+
+  .key-value div {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .key-value dd {
+    text-align: left;
+    max-width: none;
+    overflow-wrap: anywhere;
+  }
+
+  #system-ip-list .tag {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+  }
+
+}

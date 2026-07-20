@@ -1,0 +1,32 @@
+[Unit]
+Description=Linux Router Privileged Agent
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=router-panel
+WorkingDirectory=@INSTALL_DIR@
+Environment="LINUX_ROUTER_DATA_DIR=@DATA_DIR@"
+Environment="LINUX_ROUTER_AGENT_SOCKET=/run/linux-router/agent.sock"
+Environment="LINUX_ROUTER_AGENT_GROUP=router-panel"
+ExecStart=/usr/bin/python3 @INSTALL_DIR@/agent.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+RuntimeDirectory=linux-router
+RuntimeDirectoryMode=0750
+PrivateTmp=true
+NoNewPrivileges=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

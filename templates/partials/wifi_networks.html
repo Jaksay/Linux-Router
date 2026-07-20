@@ -1,0 +1,45 @@
+{% from "macros.html" import icon %}
+        {% if status.wifi_networks %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>SSID</th>
+                <th>频段</th>
+                <th>信道</th>
+                <th>信号</th>
+                <th>安全</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for network in status.wifi_networks %}
+              <tr>
+                <td>
+                  {{ network.ssid }}
+                  {% if network.in_use %}
+                    <span class="tag">当前</span>
+                  {% endif %}
+                </td>
+                <td>{{ network.band }}</td>
+                <td class="numeric-value">{{ network.channel }}</td>
+                <td class="numeric-value">{{ network.signal }}%</td>
+                <td>{{ network.security }}</td>
+                <td>
+                  <a
+                    href="#"
+                    class="table-link"
+                    data-select-ssid="{{ network.ssid }}"
+                    data-select-bssid="{{ network.bssid }}"
+                  >
+                    连接
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="wifi-empty-state">
+            <p class="muted">正在扫描...</p>
+          </div>
+        {% endif %}

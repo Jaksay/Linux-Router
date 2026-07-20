@@ -1,0 +1,6 @@
+Station AA:BB:CC:DD:EE:FF (on ap-wlan0)
+	inactive time:	123 ms
+	rx bitrate:	173.3 MBit/s VHT-MCS 8 short GI VHT-NSS 2
+	tx bitrate:	144.4 MBit/s VHT-MCS 7 VHT-NSS 2
+	signal:	-48 [-50, -48] dBm
+	connected time:	3661 seconds

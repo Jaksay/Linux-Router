@@ -1,0 +1,424 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "无线网络 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>无线</span></h2>
+  <p class="muted">按无线网卡分别展示扫描连接、当前连接和已保存网络</p>
+</section>
+
+<section class="card-grid">
+  <div class="wide-slot" id="network-wireless-slot">
+    {% include "partials/network_devices.html" %}
+  </div>
+
+  <div class="card-slot" id="network-errors-slot">
+    {% include "partials/network_errors.html" %}
+  </div>
+</section>
+
+<div class="modal-backdrop hidden" id="wifi-modal-backdrop" aria-hidden="true">
+  <div class="modal-panel wifi-modal-panel">
+    <div class="modal-header">
+      <div>
+        <h3>扫描并连接 Wi‑Fi</h3>
+        <p class="muted">扫描附近无线网络，并连接到指定的 Wi‑Fi</p>
+      </div>
+      <button type="button" class="modal-close-button" id="close-wifi-modal-button" aria-label="关闭">{{ icon("x", 18) }}</button>
+    </div>
+
+    <div class="wifi-actions">
+      <form action="{{ url_for('wifi_rescan') }}" method="post" id="wifi-rescan-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="ifname" value="{{ status.wifi_scan_device }}">
+        <button type="submit" class="button-info" id="wifi-rescan-button">重新扫描</button>
+      </form>
+    </div>
+
+    <div class="wifi-layout">
+      <section class="device-card wifi-network-panel">
+        <h4>可用网络</h4>
+        <div class="wifi-network-scroll" id="wifi-modal-list">
+        {% include "partials/wifi_networks.html" %}
+        </div>
+      </section>
+
+      <section class="device-card">
+        <h4>连接 Wi‑Fi</h4>
+        <form action="{{ url_for('wifi_connect') }}" method="post" class="login-form" id="wifi-connect-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="ifname" value="{{ status.wifi_scan_device }}">
+          <input type="hidden" name="bssid" value="" id="wifi-bssid-input">
+          <label>
+            Wi‑Fi 名称
+            <input
+              type="text"
+              name="ssid"
+              value=""
+              id="wifi-ssid-input"
+              placeholder="请输入 SSID"
+              required
+            >
+          </label>
+          <label>
+            Wi‑Fi 密码
+            <input
+              type="password"
+              name="password"
+              id="wifi-password-input"
+              placeholder="开放网络可留空"
+            >
+          </label>
+          <label>
+            指定 MAC（可选）
+            <input
+              type="text"
+              name="cloned_mac"
+              id="wifi-cloned-mac-input"
+              placeholder="留空使用网卡地址"
+              maxlength="17"
+              pattern="[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}"
+              inputmode="text"
+            >
+          </label>
+          <button type="submit" id="wifi-connect-button">连接</button>
+        </form>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block page_scripts %}
+<script>
+  (() => {
+    let currentWifiIfname = "";
+    const manageInterfaceUrl = {{ url_for('network_interface_manage')|tojson }};
+    const csrfToken = {{ csrf_token|tojson }};
+
+    const updateNetworkPage = (status, fragments) => {
+      const wireless = document.getElementById("network-wireless-slot");
+      if (wireless && fragments?.wireless !== undefined) wireless.innerHTML = fragments.wireless;
+
+      const errors = document.getElementById("network-errors-slot");
+      if (errors && fragments?.errors !== undefined) errors.innerHTML = fragments.errors;
+
+      const wifiModalList = document.getElementById("wifi-modal-list");
+      if (wifiModalList && fragments?.wifi_networks !== undefined) {
+        wifiModalList.innerHTML = fragments.wifi_networks;
+      }
+    };
+
+    const isWifiModalOpen = () => {
+      const modal = document.getElementById("wifi-modal-backdrop");
+      return modal ? !modal.classList.contains("hidden") : false;
+    };
+
+    const setWifiListMessage = (message) => {
+      const list = document.getElementById("wifi-modal-list");
+      if (!list) return;
+      list.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "wifi-empty-state";
+      const text = document.createElement("p");
+      text.className = "muted";
+      text.textContent = message;
+      empty.appendChild(text);
+      list.appendChild(empty);
+    };
+
+    const showWifiScanFailure = (data) => {
+      if (!data?.status?.wifi_networks?.length) {
+        setWifiListMessage("Wi-Fi 扫描失败");
+      }
+    };
+
+    const openWifiModal = async (ifname = "", currentMac = "") => {
+      const modal = document.getElementById("wifi-modal-backdrop");
+      if (!modal) return;
+      currentWifiIfname = ifname || currentWifiIfname || "";
+      const rescanForm = document.getElementById("wifi-rescan-form");
+      const connectFormIfnameInput = document.querySelector('#wifi-connect-form input[name="ifname"]');
+      if (rescanForm) {
+        const input = rescanForm.querySelector('input[name="ifname"]');
+        if (input) input.value = currentWifiIfname;
+      }
+      if (connectFormIfnameInput) connectFormIfnameInput.value = currentWifiIfname;
+      const clonedMacInput = document.getElementById("wifi-cloned-mac-input");
+      if (clonedMacInput) {
+        clonedMacInput.placeholder = currentMac || "留空使用网卡地址";
+      }
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      setWifiFeedback("");
+      setWifiListMessage("正在扫描...");
+      setWifiPending(true, "scan");
+      try {
+        const data = await submitWifiRescan(currentWifiIfname);
+        if (data && !data.ok) {
+          showWifiScanFailure(data);
+          setWifiFeedback(data.message || "Wi‑Fi 扫描失败", "error");
+        }
+      } catch {
+        setWifiListMessage("Wi-Fi 扫描失败");
+        setWifiFeedback("Wi‑Fi 扫描失败", "error");
+      } finally {
+        setWifiPending(false, "scan");
+      }
+      const ssidInput = document.getElementById("wifi-ssid-input");
+      if (ssidInput && !ssidInput.value) ssidInput.focus();
+    };
+
+    const closeWifiModal = () => {
+      const modal = document.getElementById("wifi-modal-backdrop");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      setWifiFeedback("");
+    };
+
+    const setWifiFeedback = window.routerFeedback.scoped("wifi-modal");
+    const setPageFeedback = window.routerFeedback.scoped("network-page");
+
+    const applyNetworkActionResult = (data) => {
+      try {
+        updateNetworkPage(data.status || {}, data.fragments || {});
+        bindNetworkEvents();
+      } catch (error) {
+        if (data && data.ok) {
+          window.location.reload();
+          return false;
+        }
+        throw error;
+      }
+      return true;
+    };
+
+    const submitWifiRescan = async (ifname = "") => {
+      const rescanForm = document.getElementById("wifi-rescan-form");
+      if (!rescanForm) {
+        throw new Error("missing wifi rescan form");
+      }
+
+      const formData = new FormData(rescanForm);
+      if (ifname) {
+        formData.set("ifname", ifname);
+      }
+
+      const data = await window.routerHttp.postForm(rescanForm.action, formData);
+      if (!applyNetworkActionResult(data)) return null;
+      return data;
+    };
+
+    const setWifiPending = (pending, type) => {
+      const rescanButton = document.getElementById("wifi-rescan-button");
+      const connectButton = document.getElementById("wifi-connect-button");
+
+      if (type === "scan" && rescanButton) {
+        rescanButton.disabled = pending;
+        rescanButton.setAttribute("aria-busy", pending ? "true" : "false");
+        rescanButton.textContent = pending ? "扫描中..." : "重新扫描";
+      }
+
+      if (type === "connect" && connectButton) {
+        connectButton.disabled = pending;
+        connectButton.setAttribute("aria-busy", pending ? "true" : "false");
+        connectButton.textContent = pending ? "连接中..." : "连接";
+      }
+    };
+
+    const bindNetworkEvents = () => {
+      const wifiModalList = document.getElementById("wifi-modal-list");
+      const ssidInput = document.getElementById("wifi-ssid-input");
+      const bssidInput = document.getElementById("wifi-bssid-input");
+      if (wifiModalList && ssidInput && bssidInput) {
+        wifiModalList.querySelectorAll("[data-select-ssid]").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            ssidInput.value = link.dataset.selectSsid || "";
+            bssidInput.value = link.dataset.selectBssid || "";
+            const passwordInput = document.getElementById("wifi-password-input");
+            if (passwordInput) passwordInput.focus();
+          });
+        });
+      }
+
+      document.querySelectorAll("[data-open-wifi-modal-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+          openWifiModal(
+            button.dataset.openWifiModalIfname || "",
+            button.dataset.currentMac || "",
+          );
+        });
+      });
+
+      document.querySelectorAll("[data-exclusive-hotspot-scan]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+          window.alert("该网卡正在运行独占 AP，无法扫描 Wi-Fi 网络");
+        });
+      });
+
+      document.querySelectorAll("[data-disconnect-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+          button.addEventListener("click", async () => {
+            const ifname = button.dataset.disconnectIfname || "";
+            if (!ifname) return;
+            if (!window.confirm(`确定要断开 ${ifname} 的 Wi-Fi 连接吗？`)) return;
+            setPageFeedback("");
+          button.disabled = true;
+          button.textContent = "断开中...";
+          try {
+            const formData = new FormData();
+            formData.set("csrf_token", csrfToken);
+            formData.set("ifname", ifname);
+            formData.set("include_wifi_networks", isWifiModalOpen() ? "1" : "0");
+            const data = await window.routerHttp.postForm("/wifi/disconnect", formData);
+            if (!applyNetworkActionResult(data)) return;
+            setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+            if (data.ok && isWifiModalOpen()) {
+              setWifiFeedback("当前 Wi‑Fi 已断开", "success", 2500);
+            }
+          } catch {
+            setPageFeedback("断开 Wi‑Fi 失败", "error");
+          } finally {
+            button.disabled = false;
+            button.textContent = "断开 Wi‑Fi";
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-manage-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", async () => {
+          const ifname = button.dataset.manageIfname || "";
+          if (!ifname) return;
+          setPageFeedback("");
+          button.disabled = true;
+          button.textContent = "接管中...";
+          try {
+            const formData = new FormData();
+            formData.set("csrf_token", csrfToken);
+            formData.set("ifname", ifname);
+            formData.set("include_wifi_networks", isWifiModalOpen() ? "1" : "0");
+            formData.set("scope", "wireless");
+            const data = await window.routerHttp.postForm(manageInterfaceUrl, formData);
+            if (!applyNetworkActionResult(data)) return;
+            setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+          } catch {
+            setPageFeedback("交给 NetworkManager 接管失败", "error");
+          } finally {
+            button.disabled = false;
+            button.textContent = "交给 NetworkManager 接管";
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-forget-uuid]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", async () => {
+          const uuid = button.dataset.forgetUuid || "";
+          if (!uuid) return;
+          setPageFeedback("");
+          button.disabled = true;
+          button.textContent = "删除中...";
+          try {
+            const formData = new FormData();
+            formData.set("csrf_token", csrfToken);
+            formData.set("uuid", uuid);
+            formData.set("include_wifi_networks", isWifiModalOpen() ? "1" : "0");
+            const data = await window.routerHttp.postForm("/wifi/forget", formData);
+            if (!applyNetworkActionResult(data)) return;
+            setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+          } catch {
+            setPageFeedback("取消保存失败", "error");
+          } finally {
+            button.disabled = false;
+            button.textContent = "取消保存";
+          }
+        });
+      });
+
+      const closeButton = document.getElementById("close-wifi-modal-button");
+      if (closeButton && !closeButton.dataset.bound) {
+        closeButton.dataset.bound = "1";
+        closeButton.addEventListener("click", () => {
+          closeWifiModal();
+        });
+      }
+
+      if (!window.__wifiEscBound) {
+        window.__wifiEscBound = true;
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && isWifiModalOpen()) {
+            closeWifiModal();
+          }
+        });
+      }
+
+      const rescanForm = document.getElementById("wifi-rescan-form");
+      if (rescanForm && !rescanForm.dataset.bound) {
+        rescanForm.dataset.bound = "1";
+        rescanForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          setWifiFeedback("");
+          setWifiListMessage("正在扫描...");
+          setWifiPending(true, "scan");
+          try {
+            const data = await submitWifiRescan(currentWifiIfname);
+            if (data && !data.ok) {
+              showWifiScanFailure(data);
+              setWifiFeedback(data.message || "Wi‑Fi 扫描失败", "error");
+            }
+          } catch {
+            setWifiListMessage("Wi-Fi 扫描失败");
+            setWifiFeedback("Wi‑Fi 扫描失败", "error");
+          } finally {
+            setWifiPending(false, "scan");
+          }
+        });
+      }
+
+      const connectForm = document.getElementById("wifi-connect-form");
+      if (connectForm && !connectForm.dataset.bound) {
+        connectForm.dataset.bound = "1";
+        connectForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          setWifiFeedback("");
+          setWifiPending(true, "connect");
+          try {
+            const data = await window.routerHttp.postForm(connectForm.action, new FormData(connectForm));
+            if (!applyNetworkActionResult(data)) return;
+            if (data.selected_ssid && ssidInput) ssidInput.value = data.selected_ssid;
+            if (data.selected_bssid && bssidInput) bssidInput.value = data.selected_bssid;
+            const passwordInput = document.getElementById("wifi-password-input");
+            const clonedMacInput = document.getElementById("wifi-cloned-mac-input");
+            if (data.selected_cloned_mac !== undefined && clonedMacInput) {
+              clonedMacInput.value = data.selected_cloned_mac || "";
+            }
+            if (data.connected) {
+              if (passwordInput) passwordInput.value = "";
+              if (clonedMacInput) clonedMacInput.value = "";
+              closeWifiModal();
+              setPageFeedback(data.message || "Wi‑Fi 已连接", "success", 2500);
+            } else {
+              setWifiFeedback(data.message || "Wi‑Fi 连接失败", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+            }
+          } catch {
+            setWifiFeedback("Wi‑Fi 连接失败", "error");
+          } finally {
+            setWifiPending(false, "connect");
+          }
+        });
+      }
+    };
+
+    bindNetworkEvents();
+  })();
+</script>
+{% endblock %}

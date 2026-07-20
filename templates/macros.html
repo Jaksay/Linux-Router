@@ -1,0 +1,7 @@
+{% macro icon(name, size=18, class_name="") -%}
+  <span
+    class="ui-icon{% if class_name %} {{ class_name }}{% endif %}"
+    style="--icon-url: url('{{ url_for('static', filename='icons/' ~ name ~ '.svg') }}'); width: {{ size }}px; height: {{ size }}px;"
+    aria-hidden="true"
+  ></span>
+{%- endmacro %}

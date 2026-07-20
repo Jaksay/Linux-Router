@@ -1,0 +1,483 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "网络热点 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>热点</span></h2>
+  <p class="muted">按无线网卡分别展示和控制 AP 热点</p>
+</section>
+
+<section class="card-grid">
+  <div class="wide-slot" id="hotspot-wireless-slot">
+    {% include "partials/hotspot_devices.html" %}
+  </div>
+
+  <div class="card-slot" id="hotspot-errors-slot">
+    {% include "partials/hotspot_errors.html" %}
+  </div>
+</section>
+
+<div class="modal-backdrop hidden" id="hotspot-modal-backdrop" aria-hidden="true">
+  <div class="modal-panel modal-panel-narrow">
+    <div class="modal-header">
+      <div>
+        <h3>开启 AP 热点</h3>
+        <p class="muted">为指定无线网卡创建一个可连接的热点</p>
+      </div>
+      <button type="button" class="modal-close-button" id="close-hotspot-modal-button" aria-label="关闭">{{ icon("x", 18) }}</button>
+    </div>
+
+    <form action="{{ url_for('hotspot_start') }}" method="post" class="login-form" id="hotspot-start-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="ifname" value="">
+      <label>
+        热点名称
+        <input
+          type="text"
+          name="ssid"
+          value=""
+          id="hotspot-ssid-input"
+          placeholder="请输入热点名称"
+          required
+        >
+      </label>
+      <label>
+        访问口令
+        <input
+          type="password"
+          name="password"
+          value=""
+          id="hotspot-password-input"
+          placeholder="请输入 8 到 63 位口令"
+          minlength="8"
+          maxlength="63"
+          required
+        >
+      </label>
+      <label>
+        热点模式
+        <select name="mode" id="hotspot-mode-input" required></select>
+      </label>
+      <label>
+        频段
+        <select name="band" id="hotspot-band-input" required></select>
+      </label>
+      <label>
+        信道
+        <select name="channel" id="hotspot-channel-input"></select>
+      </label>
+      <p class="muted compact" id="hotspot-frequency-note"></p>
+      <button type="submit" class="button-info-strong" id="hotspot-start-button">开启 AP 热点</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block page_scripts %}
+<script>
+  (() => {
+    let currentHotspotIfname = "";
+    let latestHotspotStatus = {{ status|tojson }};
+
+    const escapeHtml = (value) => String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+    const eyeIconUrl = {{ url_for('static', filename='icons/eye.svg')|tojson }};
+    const eyeOffIconUrl = {{ url_for('static', filename='icons/eye-off.svg')|tojson }};
+    const manageInterfaceUrl = {{ url_for('network_interface_manage')|tojson }};
+    const csrfToken = {{ csrf_token|tojson }};
+
+    const getHotspotDevice = (ifname) => {
+      const devices = latestHotspotStatus?.wireless_devices || [];
+      return devices.find((device) => device.device === ifname) || null;
+    };
+
+    const updateHotspotPage = (status, fragments) => {
+      latestHotspotStatus = status || {};
+
+      const wireless = document.getElementById("hotspot-wireless-slot");
+      if (wireless && fragments?.wireless !== undefined) wireless.innerHTML = fragments.wireless;
+
+      const errors = document.getElementById("hotspot-errors-slot");
+      if (errors && fragments?.errors !== undefined) errors.innerHTML = fragments.errors;
+    };
+
+    const isHotspotModalOpen = () => {
+      const modal = document.getElementById("hotspot-modal-backdrop");
+      return modal ? !modal.classList.contains("hidden") : false;
+    };
+
+    const setHotspotFeedback = window.routerFeedback.scoped("hotspot-modal");
+    const setPageFeedback = window.routerFeedback.scoped("hotspot-page");
+
+    const applyHotspotActionResult = (data) => {
+      try {
+        updateHotspotPage(data.status || {}, data.fragments || {});
+        bindHotspotEvents();
+      } catch (error) {
+        if (data && data.ok) {
+          window.location.reload();
+          return false;
+        }
+        throw error;
+      }
+      return true;
+    };
+
+    const setHotspotPending = (pending, type, button) => {
+      if (type === "start") {
+        const startButton = document.getElementById("hotspot-start-button");
+        if (!startButton) return;
+        if (!pending && startButton.dataset.disabledBySettings === "1") {
+          startButton.disabled = true;
+          startButton.textContent = "当前不可开启";
+          return;
+        }
+        startButton.disabled = pending;
+        startButton.setAttribute("aria-busy", pending ? "true" : "false");
+        startButton.textContent = pending ? "开启中..." : "开启 AP 热点";
+        return;
+      }
+
+      if (!button) return;
+      button.disabled = pending;
+      button.setAttribute("aria-busy", pending ? "true" : "false");
+      if (type === "stop") {
+        button.textContent = pending ? "关闭中..." : "关闭 AP 热点";
+      } else if (type === "keepalive-enable") {
+        button.textContent = pending ? "设置中..." : "设为保活";
+      } else if (type === "keepalive-disable") {
+        button.textContent = pending ? "取消中..." : "取消保活";
+      } else if (type === "manage") {
+        button.textContent = pending ? "接管中..." : "交给 NetworkManager 接管";
+      }
+    };
+
+    const renderChannelOptions = (bandEntry, selectedChannel, locked) => {
+      if (!bandEntry) return "";
+      const options = [];
+      if (!locked) {
+        options.push('<option value="">自动选择</option>');
+      }
+      (bandEntry.channels || []).forEach((channel) => {
+        const selected = selectedChannel && channel.value === selectedChannel ? ' selected' : "";
+        options.push(`<option value="${escapeHtml(channel.value)}"${selected}>${escapeHtml(channel.label)}${channel.frequency ? ` / ${escapeHtml(channel.frequency)}` : ""}</option>`);
+      });
+      return options.join("");
+    };
+
+    const syncHotspotChannelOptions = () => {
+      const bandInput = document.getElementById("hotspot-band-input");
+      const modeInput = document.getElementById("hotspot-mode-input");
+      const channelInput = document.getElementById("hotspot-channel-input");
+      if (!bandInput || !modeInput || !channelInput || !currentHotspotIfname) return;
+
+      const device = getHotspotDevice(currentHotspotIfname);
+      const frequencySettings = device?.hotspot?.frequency_settings || {};
+      const bands = frequencySettings.bands || [];
+      const bandEntry = bands.find((item) => item.value === bandInput.value) || bands[0];
+      const concurrentLocked = modeInput.value === "concurrent" && Boolean(frequencySettings.locked);
+      const selectedChannel = concurrentLocked ? (frequencySettings.selected_channel || "") : channelInput.value;
+      channelInput.innerHTML = renderChannelOptions(bandEntry, selectedChannel, concurrentLocked);
+      channelInput.disabled = concurrentLocked || !bandEntry;
+      if (!channelInput.value && !concurrentLocked) {
+        channelInput.value = "";
+      }
+    };
+
+    const syncHotspotModeState = () => {
+      const device = getHotspotDevice(currentHotspotIfname);
+      const frequencySettings = device?.hotspot?.frequency_settings || {};
+      const modeInput = document.getElementById("hotspot-mode-input");
+      const bandInput = document.getElementById("hotspot-band-input");
+      const note = document.getElementById("hotspot-frequency-note");
+      if (!modeInput || !bandInput || !note) return;
+
+      const selectedMode = modeInput.value || frequencySettings.selected_mode || "exclusive";
+      const concurrentLocked = selectedMode === "concurrent" && Boolean(frequencySettings.locked);
+      bandInput.disabled = concurrentLocked;
+      if (concurrentLocked && frequencySettings.selected_band) {
+        bandInput.value = frequencySettings.selected_band;
+      }
+      const modeNotes = frequencySettings.mode_notes || {};
+      const generalNote = selectedMode === "concurrent" ? (modeNotes.concurrent || "") : (modeNotes.exclusive || "");
+      note.textContent = [generalNote].filter(Boolean).join(" ");
+      syncHotspotChannelOptions();
+    };
+
+    const syncHotspotModal = (ifname) => {
+      const device = getHotspotDevice(ifname);
+      const form = document.getElementById("hotspot-start-form");
+      const ifnameInput = form?.querySelector('input[name="ifname"]');
+      const ssidInput = document.getElementById("hotspot-ssid-input");
+      const passwordInput = document.getElementById("hotspot-password-input");
+      const modeInput = document.getElementById("hotspot-mode-input");
+      const bandInput = document.getElementById("hotspot-band-input");
+      const channelInput = document.getElementById("hotspot-channel-input");
+      const note = document.getElementById("hotspot-frequency-note");
+      const startButton = document.getElementById("hotspot-start-button");
+      if (!form || !ifnameInput || !ssidInput || !passwordInput || !modeInput || !bandInput || !channelInput || !note || !startButton) {
+        return;
+      }
+
+      currentHotspotIfname = ifname;
+      ifnameInput.value = ifname;
+
+      const hotspot = device?.hotspot || {};
+      const frequencySettings = hotspot.frequency_settings || {};
+      const concurrency = frequencySettings.concurrency || null;
+      const concurrencyText = concurrency
+        ? `并发方式：${concurrency.label || "未知"}${concurrency.description ? `；${concurrency.description}` : ""}`
+        : "";
+
+      if (hotspot.ssid) ssidInput.value = hotspot.ssid;
+      if (hotspot.password) passwordInput.value = hotspot.password;
+
+      if (!frequencySettings.available) {
+        modeInput.innerHTML = "";
+        bandInput.innerHTML = "";
+        channelInput.innerHTML = "";
+        modeInput.disabled = true;
+        bandInput.disabled = true;
+        channelInput.disabled = true;
+        note.textContent = [concurrencyText, frequencySettings.reason || "当前不能开启热点"].filter(Boolean).join(" ");
+        startButton.dataset.disabledBySettings = "1";
+        startButton.disabled = true;
+        startButton.textContent = "当前不可开启";
+        return;
+      }
+
+      modeInput.innerHTML = (frequencySettings.available_modes || []).map((item) => {
+        const selected = item.value === frequencySettings.selected_mode ? " selected" : "";
+        return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item.label)}${item.description ? ` / ${escapeHtml(item.description)}` : ""}</option>`;
+      }).join("");
+      if (!modeInput.value && frequencySettings.selected_mode) {
+        modeInput.value = frequencySettings.selected_mode;
+      }
+      bandInput.innerHTML = (frequencySettings.bands || []).map((band) => {
+        const selected = band.value === frequencySettings.selected_band ? " selected" : "";
+        return `<option value="${escapeHtml(band.value)}"${selected}>${escapeHtml(band.label)}</option>`;
+      }).join("");
+      if (!bandInput.value && frequencySettings.selected_band) {
+        bandInput.value = frequencySettings.selected_band;
+      }
+
+      modeInput.disabled = false;
+      bandInput.disabled = false;
+      channelInput.disabled = false;
+      startButton.dataset.disabledBySettings = "0";
+      startButton.disabled = false;
+      startButton.textContent = "开启 AP 热点";
+
+      if (frequencySettings.selected_channel) {
+        channelInput.value = frequencySettings.selected_channel;
+      } else {
+        channelInput.value = "";
+      }
+      syncHotspotModeState();
+      note.textContent = [concurrencyText, note.textContent].filter(Boolean).join(" ");
+    };
+
+    const openHotspotModal = (ifname = "") => {
+      const modal = document.getElementById("hotspot-modal-backdrop");
+      if (!modal || !ifname) return;
+      syncHotspotModal(ifname);
+      setHotspotFeedback("");
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      const ssidInput = document.getElementById("hotspot-ssid-input");
+      if (ssidInput) ssidInput.focus();
+    };
+
+    const closeHotspotModal = () => {
+      const modal = document.getElementById("hotspot-modal-backdrop");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      setHotspotFeedback("");
+    };
+
+    const bindHotspotEvents = () => {
+      document.querySelectorAll("[data-hotspot-password-toggle]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+          const value = button.parentElement?.querySelector("[data-hotspot-password-value]");
+          const icon = button.querySelector(".ui-icon");
+          if (!value || !icon) return;
+          const willShow = button.getAttribute("aria-pressed") !== "true";
+          value.textContent = willShow ? (button.dataset.password || "") : "••••••••";
+          icon.style.setProperty("--icon-url", `url('${willShow ? eyeOffIconUrl : eyeIconUrl}')`);
+          button.setAttribute("aria-pressed", willShow ? "true" : "false");
+          button.setAttribute("aria-label", willShow ? "隐藏访问口令" : "显示访问口令");
+          button.title = willShow ? "隐藏访问口令" : "显示访问口令";
+        });
+      });
+
+      document.querySelectorAll("[data-open-hotspot-modal-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+          openHotspotModal(button.dataset.openHotspotModalIfname || "");
+        });
+      });
+
+      document.querySelectorAll("[data-manage-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", async () => {
+          const ifname = button.dataset.manageIfname || "";
+          if (!ifname) return;
+          setPageFeedback("");
+          setHotspotPending(true, "manage", button);
+          try {
+            const formData = new FormData();
+            formData.set("csrf_token", csrfToken);
+            formData.set("ifname", ifname);
+            formData.set("scope", "hotspot");
+            const data = await window.routerHttp.postForm(manageInterfaceUrl, formData);
+            if (!applyHotspotActionResult(data)) return;
+            setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+          } catch {
+            setPageFeedback("交给 NetworkManager 接管失败", "error");
+          } finally {
+            setHotspotPending(false, "manage", button);
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-stop-hotspot-ifname]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+          button.addEventListener("click", async () => {
+            const ifname = button.dataset.stopHotspotIfname || "";
+            if (!ifname) return;
+            if (!window.confirm(`确定要关闭 ${ifname} 上的 AP 热点吗？已连接设备将断开。`)) return;
+            setPageFeedback("");
+          setHotspotPending(true, "stop", button);
+          try {
+            const formData = new FormData();
+            formData.set("csrf_token", csrfToken);
+            formData.set("ifname", ifname);
+            const data = await window.routerHttp.postForm("/hotspot/stop", formData);
+            if (!applyHotspotActionResult(data)) return;
+            setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+          } catch {
+            setPageFeedback("关闭热点失败", "error");
+          } finally {
+            setHotspotPending(false, "stop", button);
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-protected-hotspot-stop]").forEach((button) => {
+        if (button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+          window.alert("该 AP 已设为保活，请先取消保活");
+        });
+      });
+
+      const bindKeepaliveAction = (selector, action, type, failureMessage) => {
+        document.querySelectorAll(selector).forEach((button) => {
+          if (button.dataset.bound) return;
+          button.dataset.bound = "1";
+          button.addEventListener("click", async () => {
+            const ifname = type === "keepalive-enable"
+              ? (button.dataset.enableHotspotKeepaliveIfname || "")
+              : (button.dataset.disableHotspotKeepaliveIfname || "");
+            if (!ifname) return;
+            setPageFeedback("");
+            setHotspotPending(true, type, button);
+            try {
+              const formData = new FormData();
+              formData.set("csrf_token", csrfToken);
+              formData.set("ifname", ifname);
+              const data = await window.routerHttp.postForm(action, formData);
+              if (!applyHotspotActionResult(data)) return;
+              setPageFeedback(data.message || "操作已提交", data.ok ? "success" : "error", data.ok ? 2500 : 0);
+            } catch {
+              setPageFeedback(failureMessage, "error");
+            } finally {
+              setHotspotPending(false, type, button);
+            }
+          });
+        });
+      };
+      bindKeepaliveAction(
+        "[data-enable-hotspot-keepalive-ifname]",
+        "/hotspot/keepalive/enable",
+        "keepalive-enable",
+        "设置 AP 保活失败",
+      );
+      bindKeepaliveAction(
+        "[data-disable-hotspot-keepalive-ifname]",
+        "/hotspot/keepalive/disable",
+        "keepalive-disable",
+        "取消 AP 保活失败",
+      );
+
+      const closeButton = document.getElementById("close-hotspot-modal-button");
+      if (closeButton && !closeButton.dataset.bound) {
+        closeButton.dataset.bound = "1";
+        closeButton.addEventListener("click", () => {
+          closeHotspotModal();
+        });
+      }
+
+      const bandInput = document.getElementById("hotspot-band-input");
+      if (bandInput && !bandInput.dataset.bound) {
+        bandInput.dataset.bound = "1";
+        bandInput.addEventListener("change", () => {
+          syncHotspotChannelOptions();
+        });
+      }
+
+      const modeInput = document.getElementById("hotspot-mode-input");
+      if (modeInput && !modeInput.dataset.bound) {
+        modeInput.dataset.bound = "1";
+        modeInput.addEventListener("change", () => {
+          syncHotspotModeState();
+        });
+      }
+
+      if (!window.__hotspotEscBound) {
+        window.__hotspotEscBound = true;
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && isHotspotModalOpen()) {
+            closeHotspotModal();
+          }
+        });
+      }
+
+      const startForm = document.getElementById("hotspot-start-form");
+      if (startForm && !startForm.dataset.bound) {
+        startForm.dataset.bound = "1";
+        startForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          setHotspotFeedback("");
+          setHotspotPending(true, "start");
+          try {
+            const data = await window.routerHttp.postForm(startForm.action, new FormData(startForm));
+            if (!applyHotspotActionResult(data)) return;
+            if (data.ok) {
+              closeHotspotModal();
+              setPageFeedback(data.message || "热点已开启", "success", 2500);
+            } else {
+              setHotspotFeedback(data.message || "开启热点失败", "error");
+            }
+          } catch {
+            setHotspotFeedback("开启热点失败", "error");
+          } finally {
+            setHotspotPending(false, "start");
+          }
+        });
+      }
+    };
+
+    bindHotspotEvents();
+  })();
+</script>
+{% endblock %}

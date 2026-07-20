@@ -1,0 +1,154 @@
+{% from "macros.html" import icon %}
+    {% if status.wireless_devices %}
+      <div class="device-list hotspot-device-grid" id="hotspot-wireless">
+        {% for device in status.wireless_devices %}
+        <section class="device-card">
+          <div class="device-head">
+            <div>
+              <h3 class="card-title card-primary-heading">{{ icon("network") }}<span class="mono-value">{{ device.device }}</span></h3>
+              {% if device.hardware and device.hardware.model %}
+              {% set hardware_subtitle = [device.hardware.bus_label, device.hardware.vendor, device.hardware.model]|select|join(' · ') %}
+              <p class="muted device-subtitle" title="{{ hardware_subtitle }}">{{ hardware_subtitle|truncate(46, true, '…') }}</p>
+              {% endif %}
+            </div>
+          </div>
+            {% if device.state == 'unmanaged' %}
+              <h4>NetworkManager</h4>
+              <p class="muted compact">当前未交给 NetworkManager 管理，接管后才能开启热点</p>
+              <div class="device-actions">
+                <button
+                  type="button"
+                  class="button-info"
+                  data-manage-ifname="{{ device.device }}"
+                >
+                  交给 NetworkManager 接管
+                </button>
+              </div>
+            {% else %}
+              {% set concurrency = device.hotspot.frequency_settings.concurrency if device.hotspot.frequency_settings else none %}
+              {% if concurrency or (device.hotspot.active and device.hotspot.keepalive) %}
+              <div class="hotspot-policy-list">
+                {% if concurrency %}
+                <div class="hotspot-policy-row">
+                  <span class="hotspot-policy-label">并发限制</span>
+                  <span class="hotspot-policy-value">
+                    <strong class="hotspot-policy-state">{{ concurrency.label }}</strong>
+                    {% if concurrency.description %}<span>{{ concurrency.description }}</span>{% endif %}
+                  </span>
+                </div>
+                {% endif %}
+                {% if device.hotspot.active and device.hotspot.keepalive %}
+                <div class="hotspot-policy-row">
+                  <span class="hotspot-policy-label">保活策略</span>
+                  <span class="hotspot-policy-value">
+                    <strong class="hotspot-policy-state hotspot-policy-state-active">已启用</strong>
+                    <span>冲突时 AP 优先</span>
+                  </span>
+                </div>
+                {% endif %}
+              </div>
+              {% endif %}
+              {% if device.hotspot.active %}
+              <dl class="key-value compact-key-value">
+                <div><dt>名称</dt><dd>{{ device.hotspot.ssid }}</dd></div>
+                <div><dt>模式</dt><dd>{{ "并发 AP+STA" if device.hotspot.mode == "concurrent" else "独占 AP" }}</dd></div>
+                <div><dt>频段</dt><dd>{{ device.hotspot.band_label }}</dd></div>
+                <div><dt>频率</dt><dd class="numeric-value">{{ device.hotspot.frequency }}</dd></div>
+                <div><dt>信道</dt><dd class="numeric-value">{{ device.hotspot.channel }}</dd></div>
+                <div>
+                  <dt>访问口令</dt>
+                  {% if device.hotspot.password %}
+                  <dd class="hotspot-password-display">
+                    <span data-hotspot-password-value>••••••••</span>
+                    <button
+                      type="button"
+                      class="password-visibility-button"
+                      data-hotspot-password-toggle
+                      data-password="{{ device.hotspot.password }}"
+                      aria-label="显示访问口令"
+                      aria-pressed="false"
+                      title="显示访问口令"
+                    >{{ icon("eye", 18) }}</button>
+                  </dd>
+                  {% else %}
+                  <dd>无</dd>
+                  {% endif %}
+                </div>
+                <div><dt>IP 段</dt><dd class="mono-value">{{ device.hotspot.ip }}</dd></div>
+              </dl>
+              <div class="device-actions">
+                {% if device.hotspot.keepalive %}
+                <button
+                  type="button"
+                  class="button-danger-outline"
+                  data-disable-hotspot-keepalive-ifname="{{ device.device }}"
+                >
+                  取消保活
+                </button>
+                <button
+                  type="button"
+                  class="button-danger-outline"
+                  data-protected-hotspot-stop
+                >
+                  关闭 AP 热点
+                </button>
+                {% else %}
+                <button
+                  type="button"
+                  class="button-info-strong"
+                  data-enable-hotspot-keepalive-ifname="{{ device.device }}"
+                >
+                  设为保活
+                </button>
+                <button
+                  type="button"
+                  class="button-danger-outline"
+                  data-stop-hotspot-ifname="{{ device.device }}"
+                >
+                  关闭 AP 热点
+                </button>
+                {% endif %}
+              </div>
+              {% else %}
+                {% if device.hotspot.keepalive %}
+                <p class="warning compact">保活热点当前离线，正在尝试恢复{% if status.keepalive.last_error %}：{{ status.keepalive.last_error }}{% endif %}</p>
+                <div class="device-actions">
+                  <button
+                    type="button"
+                    class="button-danger-outline"
+                    data-disable-hotspot-keepalive-ifname="{{ device.device }}"
+                  >
+                    取消保活
+                  </button>
+                </div>
+                {% else %}
+                {% if device.hotspot.conflict %}
+                <p class="alert compact">hostapd 正在占用无线网卡</p>
+                {% endif %}
+                {% if device.hotspot.frequency_settings and device.hotspot.frequency_settings.note %}
+                <p class="muted compact">{{ device.hotspot.frequency_settings.note }}</p>
+                {% endif %}
+                {% if device.hotspot.frequency_settings and not device.hotspot.frequency_settings.available %}
+                <p class="warning compact">{{ device.hotspot.frequency_settings.reason }}</p>
+                {% else %}
+              <div class="device-actions">
+                <button
+                  type="button"
+                  class="button-info-strong"
+                  data-open-hotspot-modal-ifname="{{ device.device }}"
+                >
+                  开启 AP 热点
+                </button>
+              </div>
+                {% endif %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+        </section>
+        {% endfor %}
+      </div>
+    {% else %}
+    <article class="card card-wide" id="hotspot-wireless">
+      <p class="muted">当前没有无线接口</p>
+    </article>
+    {% endif %}

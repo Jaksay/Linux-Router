@@ -1,0 +1,64 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "系统设置 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>设置</span></h2>
+  <p class="muted">管理部分设置项目</p>
+</section>
+
+<section class="settings-card-list">
+  <article class="card">
+    <h3 class="card-title">{{ icon("network") }}<span>LAN 网段</span></h3>
+    <form action="{{ url_for('update_lan_network') }}" method="post" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        IPv4 网段
+        <input
+          type="text"
+          class="mono-value"
+          name="lan_network"
+          value="{{ network.lan_network }}"
+          placeholder="192.168.50.0/24"
+          required
+        >
+        <p class="muted form-hint">网关 {{ network.lan_gateway }}，下次开启热点时生效</p>
+      </label>
+      <button type="submit">保存 LAN 设置</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <h3 class="card-title">{{ icon("key-round") }}<span>管理员密码</span></h3>
+    <form action="{{ url_for('update_password') }}" method="post" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        当前密码
+        <input type="password" name="current_password" required>
+      </label>
+      <label>
+        新密码
+        <input type="password" name="new_password" required>
+      </label>
+      <label>
+        确认新密码
+        <input type="password" name="confirm_password" required>
+      </label>
+      <button type="submit">保存新密码</button>
+    </form>
+  </article>
+
+  <article class="card device-operation-card">
+    <h3 class="card-title">{{ icon("refresh-cw") }}<span>设备操作</span></h3>
+    <p class="muted device-operation-note">重启期间管理页面将暂时不可用</p>
+    <form
+      action="{{ url_for('reboot_system') }}"
+      method="post"
+      onsubmit="return window.confirm('确定要重启设备吗？当前网络连接将暂时中断。')"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button-danger">重启设备</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

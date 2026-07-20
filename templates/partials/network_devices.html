@@ -1,0 +1,100 @@
+{% from "macros.html" import icon %}
+    {% if status.wireless_devices %}
+      <div class="device-list" id="network-wireless">
+        {% for device in status.wireless_devices %}
+        <section class="device-card">
+          <div class="device-head">
+            <div>
+              <h3 class="card-title card-primary-heading">{{ icon("network") }}<span class="mono-value">{{ device.device }}</span></h3>
+              {% if device.hardware and device.hardware.model %}
+              {% set hardware_subtitle = [device.hardware.bus_label, device.hardware.vendor, device.hardware.model]|select|join(' · ') %}
+              <p class="muted device-subtitle" title="{{ hardware_subtitle }}">{{ hardware_subtitle|truncate(46, true, '…') }}</p>
+              {% endif %}
+            </div>
+          </div>
+          <div class="network-card-grid">
+            {% if device.state == 'unmanaged' %}
+            <article class="network-item-card">
+              <h4>NetworkManager</h4>
+              <p class="muted compact">当前未交给 NetworkManager 管理，接管后才能扫描连接</p>
+              <div class="device-actions">
+                <button
+                  type="button"
+                  class="button-info"
+                  data-manage-ifname="{{ device.device }}"
+                >
+                  交给 NetworkManager 接管
+                </button>
+              </div>
+            </article>
+            {% else %}
+            <article class="network-item-card">
+              <h4>扫描连接</h4>
+              <div class="device-actions">
+                <button
+                  type="button"
+                  class="button-info-strong"
+                  {% if device.connection == 'DebianRouterHotspot' %}
+                  aria-disabled="true"
+                  data-exclusive-hotspot-scan
+                  {% else %}
+                  data-open-wifi-modal-ifname="{{ device.device }}"
+                  {% endif %}
+                  data-current-mac="{{ device.wifi_link.mac_address if device.wifi_link else device.hardware.permanent_mac_address }}"
+                >
+                  扫描并连接 Wi‑Fi
+                </button>
+              </div>
+              {% if device.saved_networks %}
+              <h5 class="saved-network-title">已保存的网络</h5>
+              <div class="saved-network-list">
+                {% for network in device.saved_networks %}
+                <div class="saved-network-row">
+                  <div class="saved-network-meta">
+                    <strong>{{ network.name }}</strong>
+                    <span class="muted">[{{ network.state_label }}{% if network.binding_label %}，{{ network.binding_label }}{% endif %}{% if network.autoconnect == '是' %}，自动连接{% endif %}]</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="text-link-button text-link-danger"
+                    data-forget-uuid="{{ network.uuid }}"
+                  >
+                    {{ icon("x", 14) }}<span>取消保存</span>
+                  </button>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </article>
+
+            {% if device.wifi_link %}
+            <article class="network-item-card">
+              <h4>当前连接</h4>
+              <dl class="key-value compact-key-value">
+                <div><dt>SSID</dt><dd>{{ device.wifi_link.ssid }}</dd></div>
+                <div><dt>IP</dt><dd class="mono-value">{{ device.wifi_link.ip_address }}</dd></div>
+                <div><dt>MAC</dt><dd class="mono-value">{{ device.wifi_link.mac_address }}</dd></div>
+                <div><dt>频段 / 频率 / 信道</dt><dd class="numeric-value">{{ device.wifi_link.band }} / {{ device.wifi_link.frequency }} / {{ device.wifi_link.channel }}</dd></div>
+                <div><dt>速率</dt><dd class="numeric-value">{{ device.wifi_link.rate }}</dd></div>
+              </dl>
+              <div class="device-actions">
+                <button
+                  type="button"
+                  class="button-danger-outline"
+                  data-disconnect-ifname="{{ device.device }}"
+                >
+                  断开 Wi‑Fi
+                </button>
+              </div>
+            </article>
+            {% endif %}
+            {% endif %}
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+    {% else %}
+    <article class="card card-wide" id="network-wireless">
+      <p class="muted">当前没有无线接口</p>
+    </article>
+    {% endif %}

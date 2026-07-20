@@ -1,0 +1,128 @@
+{% from "macros.html" import icon %}
+{% extends "base.html" %}
+{% set title = "系统信息 - Linux Router" %}
+{% block content %}
+<section class="page-header">
+  <h2 class="section-title"><span>概览</span></h2>
+  <p class="muted">主机的基础状态、运行环境和资源占用</p>
+</section>
+
+<section class="card-grid">
+  <article class="card card-wide network-status-card">
+    <h3 class="card-title">{{ icon("activity") }}<span>网络状态</span></h3>
+    <div class="network-status-grid">
+      {% for item in [
+        {'key': 'wired', 'label': '有线', 'icon': 'ethernet-port'},
+        {'key': 'wireless', 'label': '无线', 'icon': 'wifi'},
+        {'key': 'hotspot', 'label': '热点', 'icon': 'radio-tower'}
+      ] %}
+        {% set online = info.network_status[item.key] if info.network_status else false %}
+        <div class="network-status-item {{ 'is-online' if online else 'is-offline' }}">
+          <span class="network-status-name">{{ icon(item.icon, 20) }}<span>{{ item.label }}</span></span>
+          <span class="network-status-result" aria-label="{{ '已连接' if online else '未连接' }}">
+            {{ icon('check' if online else 'x', 20) }}
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="card">
+    <h3 class="card-title">{{ icon("server") }}<span>主机信息</span></h3>
+    <dl class="key-value">
+      <div><dt>主机名</dt><dd data-system-field="hostname">{{ info.hostname }}</dd></div>
+      <div><dt>系统版本</dt><dd data-system-field="os_name">{{ info.os_name }}</dd></div>
+      <div><dt>内核版本</dt><dd class="mono-value" data-system-field="kernel">{{ info.kernel }}</dd></div>
+      <div><dt>架构</dt><dd data-system-field="architecture">{{ info.architecture }}</dd></div>
+      <div><dt>运行时长</dt><dd data-system-field="uptime">{{ info.uptime }}</dd></div>
+      <div><dt>负载</dt><dd data-system-field="load_average">{{ info.load_average }}</dd></div>
+    </dl>
+  </article>
+
+  <article class="card">
+    <h3 class="card-title">{{ icon("cpu") }}<span>硬件概览</span></h3>
+    <dl class="key-value">
+      <div><dt>CPU</dt><dd data-system-field="cpu_model">{{ info.cpu_model }}</dd></div>
+      <div><dt>CPU 温度</dt><dd data-system-field="cpu_temperature">{{ info.cpu_temperature }}</dd></div>
+      <div><dt>内存总量</dt><dd data-system-field="memory_total">{{ info.memory_total }}</dd></div>
+      <div><dt>可用内存</dt><dd data-system-field="memory_available">{{ info.memory_available }}</dd></div>
+      <div><dt>磁盘总量</dt><dd data-system-field="disk_total">{{ info.disk_total }}</dd></div>
+      <div><dt>剩余磁盘</dt><dd data-system-field="disk_free">{{ info.disk_free }}</dd></div>
+    </dl>
+  </article>
+
+  <article class="card card-wide" id="system-ip-card">
+    <h3 class="card-title">{{ icon("globe") }}<span>本机 IP</span></h3>
+    {% if info.ip_addresses %}
+      <div class="tag-list" id="system-ip-list">
+        {% for ip in info.ip_addresses %}
+          <a
+            class="tag mono-value"
+            href="http://{{ '[' ~ ip ~ ']' if ':' in ip else ip }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            style="text-decoration: none"
+          >{{ ip }}</a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted" id="system-ip-empty">暂未读取到 IP 地址</p>
+    {% endif %}
+  </article>
+
+  <article class="card card-wide" id="system-active-connections-card">
+    <h3 class="card-title">{{ icon("waypoints") }}<span>活动连接</span></h3>
+    <div id="system-active-connections">
+    {% if info.active_connections %}
+      <table class="table responsive-detail-table system-connections-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>类型</th>
+            <th>设备</th>
+            <th>IPv4 地址</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for connection in info.active_connections %}
+          <tr>
+            <td data-label="名称">{{ connection.name }}</td>
+            <td data-label="类型">{{ connection.type_label }}</td>
+            <td class="mono-value" data-label="设备">{{ connection.device }}</td>
+            <td class="mono-value" data-label="IPv4 地址">{{ connection.ip_addresses|join(', ') if connection.ip_addresses else '无' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">当前没有活动连接</p>
+    {% endif %}
+    </div>
+  </article>
+
+  <article class="card card-wide" id="system-interface-card">
+    <h3 class="card-title">{{ icon("network") }}<span>网卡信息</span></h3>
+    {% if info.network_interfaces %}
+      <div class="device-list hardware-device-list" id="system-interface-list">
+        {% for interface in info.network_interfaces %}
+          <article class="device-card">
+            <h4 class="mono-value card-primary-name">{{ interface.name }}</h4>
+            <dl class="key-value hardware-key-value">
+              <div><dt>类别</dt><dd>{{ interface.role_label }}</dd></div>
+              <div><dt>总线</dt><dd>{{ interface.bus_label }}</dd></div>
+              <div><dt>厂商</dt><dd>{{ interface.vendor }}</dd></div>
+              <div><dt>型号</dt><dd class="hardware-model-value" title="{{ interface.model }}">{{ interface.model }}</dd></div>
+              <div><dt>驱动</dt><dd>{{ interface.driver }}</dd></div>
+              <div><dt>硬件 ID</dt><dd class="mono-value">{{ interface.hardware_id }}</dd></div>
+              <div><dt>位置</dt><dd class="mono-value">{{ interface.location }}</dd></div>
+              <div><dt>MAC</dt><dd class="mono-value">{{ interface.mac_address }}</dd></div>
+            </dl>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted" id="system-interface-empty">暂未读取到网卡信息</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}
