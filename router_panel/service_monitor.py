@@ -11,6 +11,10 @@ SERVICE_MONITOR_CONFIG_PATH = DATA_DIR / "service-monitor.json"
 DEFAULT_SERVICE_MONITOR_CONFIG = {"services": []}
 SERVICE_ACTIONS = {"start", "stop", "restart"}
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}\.service$")
+PROTECTED_SERVICE_NAMES = {
+    "router-panel.service",
+    "router-panel-agent.service",
+}
 
 
 def normalize_service_name(value: str) -> tuple[str, str | None]:
@@ -21,6 +25,8 @@ def normalize_service_name(value: str) -> tuple[str, str | None]:
         name = f"{name}.service"
     if not SERVICE_NAME_RE.fullmatch(name):
         return "", f"服务名称无效：{value.strip()}"
+    if name in PROTECTED_SERVICE_NAMES:
+        return "", f"不能监控当前面板自身服务：{name}"
     return name, None
 
 

@@ -22,6 +22,12 @@ def register_tools_routes(app, login_required, is_async_request) -> None:
                 "installed": False,
                 "service_active": False,
                 "logged_in": False,
+                "state_label": "Agent 不可用",
+                "state_level": "error",
+                "backend_state": "",
+                "tailscale_ips": [],
+                "self_name": "",
+                "user": "",
                 "errors": [str(exc)],
             }
         return {"config": config, "status": status}

@@ -21,12 +21,15 @@
     <p class="muted compact">安装完成后刷新本页。</p>
     {% elif tailscale.status.logged_in %}
     <dl class="key-value">
-      <div><dt>状态</dt><dd class="mono-value">{{ tailscale.status.backend_state or "未知" }}</dd></div>
       <div>
-        <dt>服务</dt>
+        <dt>运行状态</dt>
         <dd class="mono-value tailscale-service-state {{ 'tailscale-service-active' if tailscale.status.service_active else 'tailscale-service-inactive' }}">
-          {{ "active" if tailscale.status.service_active else "inactive" }}
+          {{ "运行" if tailscale.status.service_active else "未运行" }}
         </dd>
+      </div>
+      <div>
+        <dt>登录状态</dt>
+        <dd><span class="status-badge status-{{ tailscale.status.state_level }}">{{ tailscale.status.state_label }}</span></dd>
       </div>
       <div><dt>地址</dt><dd class="mono-value">{{ tailscale.status.tailscale_ips|join(", ") or "无" }}</dd></div>
       <div><dt>设备名</dt><dd class="mono-value">{{ tailscale.status.self_name or "未知" }}</dd></div>
@@ -52,6 +55,12 @@
     {% else %}
     <form action="{{ url_for('tailscale_login') }}" method="post" class="login-form" id="tailscale-login-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="tailscale-login-summary">
+        <span class="status-badge status-{{ tailscale.status.state_level }}">{{ tailscale.status.state_label }}</span>
+        <span class="muted">
+          {{ "tailscaled 正在运行" if tailscale.status.service_active else "登录时会尝试启动 tailscaled" }}
+        </span>
+      </div>
       <label>
         是否接受 Tailnet 路由
         <span class="checkbox-row">
@@ -102,7 +111,7 @@
             id="service-monitor-services"
             name="services"
             value="{{ service_monitor.config.services|join(', ') }}"
-            placeholder="例如 mosdns.service, sing-box.service"
+            placeholder="例如 nginx.service, cron.service"
             inputmode="text"
           >
           <button type="submit" class="button-info-strong">保存服务</button>
@@ -169,8 +178,19 @@
       wrap.classList.remove("hidden");
     };
 
-    const writeLoginWaitingPage = (loginWindow) => {
+    const escapeLoginPageText = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]));
+
+    const writeLoginStatusPage = (loginWindow, state) => {
       if (!loginWindow) return;
+      const isFailure = state.variant === "failure";
+      const linkMarkup = state.url ? `
+        <a class="login-link" href="${escapeLoginPageText(state.url)}" rel="noopener noreferrer">${escapeLoginPageText(state.url)}</a>` : "";
       loginWindow.document.open();
       loginWindow.document.write(`<!doctype html>
 <html lang="zh-CN">
@@ -206,6 +226,18 @@
         border-top-color: #2563eb;
         animation: spin 0.9s linear infinite;
       }
+      .status-icon {
+        width: 44px;
+        height: 44px;
+        margin: 0 auto 18px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background: #fef2f2;
+        color: #dc2626;
+        font-size: 24px;
+        font-weight: 600;
+      }
       h1 {
         margin: 0 0 8px;
         font-size: 18px;
@@ -218,6 +250,23 @@
         line-height: 1.7;
         color: #6b7280;
       }
+      .login-link {
+        box-sizing: border-box;
+        display: block;
+        width: 100%;
+        margin-top: 16px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #f9fafb;
+        color: #2563eb;
+        font-size: 13px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+        text-decoration: none;
+      }
+      .login-link:hover {
+        background: #f3f4f6;
+      }
       @keyframes spin {
         to { transform: rotate(360deg); }
       }
@@ -226,14 +275,38 @@
   <body>
     <main class="page">
       <section class="panel">
-        <div class="spinner" aria-hidden="true"></div>
-        <h1>正在打开 Tailscale 登录</h1>
-        <p>正在重定向到登录页面，请稍候</p>
+        ${isFailure ? '<div class="status-icon" aria-hidden="true">!</div>' : '<div class="spinner" aria-hidden="true"></div>'}
+        <h1>${escapeLoginPageText(state.title)}</h1>
+        <p>${escapeLoginPageText(state.message)}</p>
+        ${linkMarkup}
       </section>
     </main>
   </body>
 </html>`);
       loginWindow.document.close();
+    };
+
+    const writeLoginWaitingPage = (loginWindow) => {
+      writeLoginStatusPage(loginWindow, {
+        title: "正在打开 Tailscale 登录",
+        message: "正在请求登录地址，请稍候",
+      });
+    };
+
+    const writeLoginRedirectPage = (loginWindow, url) => {
+      writeLoginStatusPage(loginWindow, {
+        title: "正在跳转到 Tailscale 登录",
+        message: "如果没有自动跳转，请点击下方链接",
+        url,
+      });
+    };
+
+    const writeLoginFailurePage = (loginWindow) => {
+      writeLoginStatusPage(loginWindow, {
+        title: "登录请求失败",
+        message: "请回到 Linux Router 页面查看错误",
+        variant: "failure",
+      });
     };
 
     const stopTailscaleLoginPolling = () => {
@@ -296,7 +369,10 @@
         const data = await window.routerHttp.postForm(form.getAttribute("action"), new FormData(form));
         if (data.login_url) {
           if (loginWindow) {
-            loginWindow.location.href = data.login_url;
+            writeLoginRedirectPage(loginWindow, data.login_url);
+            window.setTimeout(() => {
+              loginWindow.location.href = data.login_url;
+            }, 100);
           } else {
             showLoginLink(data.login_url);
           }
@@ -308,11 +384,14 @@
           }
           return;
         }
+        if (loginWindow) {
+          writeLoginFailurePage(loginWindow);
+        }
         setToolsFeedback(data.message || "操作已完成", data.ok ? "success" : "error", data.ok ? 2500 : 0);
         window.setTimeout(() => window.location.reload(), data.ok ? 900 : 1600);
       } catch {
         if (loginWindow) {
-          loginWindow.close();
+          writeLoginFailurePage(loginWindow);
         }
         setToolsFeedback(fallbackMessage, "error");
         if (button) {

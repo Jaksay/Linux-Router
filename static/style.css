@@ -473,6 +473,13 @@ button[aria-disabled="true"] {
   color: var(--danger-text);
 }
 
+.tailscale-login-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
 .command-snippet {
   margin: 14px 0 10px;
   padding: 12px 14px;

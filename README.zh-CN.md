@@ -1,29 +1,29 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-# Linux Router
+<h1>
+  <img src="static/favicon.ico" alt="" width="32" height="32" align="center">
+  Linux Router
+</h1>
 
-## 简介
+Linux Router 可以将 Debian 或 Armbian 设备变成路由器，并提供一个清晰的 Web 控制台，用于查看系统状态、管理有线网络和 Wi-Fi、开启热点共享、查看接入设备以及执行维护操作。
 
-Linux Router 是一个将 Debian/Armbian 设备转变为路由器的项目。通过 Web 界面，可以直观地管理系统状态、网络配置、Wi-Fi、热点共享和客户端连接。
-
-项目基于 Flask、NetworkManager 和 systemd 构建，系统查询和网络变更由独立的 root Agent 统一执行。
+项目基于 Flask、NetworkManager 和 systemd 构建。Web 服务以普通用户运行，系统查询和网络变更由独立的 root Agent 通过 Unix Socket 执行白名单操作。
 
 ![Linux Router Web 管理界面](docs/assets/linux-router-web-console.png)
 
-## 功能
+## 功能亮点
 
-- 查看系统信息、网卡状态、IP 地址和活动连接
-- 检查并修复运行依赖和 NetworkManager 网络环境
-- 管理有线网络和 Wi-Fi 连接，包括扫描、连接、断开和忘记网络
-- 创建独占 AP 或并发 AP+STA 热点
-- 查看热点客户端、DHCP 租约和无线连接状态
-- 配置热点 LAN 网段和 NetworkManager shared 共享模式
-- 启用热点保活，并在热点断线后自动恢复
-- 修改管理员密码和执行设备重启
+- 系统概览：硬件信息、IP 地址、活动连接、存储、内存和运行状态
+- 依赖检查与修复：NetworkManager、dnsmasq、iptables、`iw` 等运行环境
+- 有线和 Wi-Fi 管理：扫描、连接、断开、配置绑定和忘记网络
+- 热点创建：支持独占 AP，以及网卡能力允许时的 AP+STA 并发模式
+- 热点设备：查看客户端、DHCP 租约、无线信号和 LAN 网段配置
+- 热点保活：热点异常断线后自动尝试恢复
+- 工具能力：Tailscale 登录辅助、服务监控、密码修改和设备重启
 
 ## 网络变更风险
 
-首次安装、卸载和网络栈修复会修改宿主机网络配置，可能重载 NetworkManager、应用 netplan、启停 `dhcpcd`，以及删除项目创建的热点和虚拟接口。相关操作可能导致网络连接中断。
+安装、卸载和网络栈修复会修改宿主机网络配置，可能重载 NetworkManager、应用 netplan、启停 `dhcpcd`，以及删除项目创建的热点和虚拟接口。相关操作可能导致网络连接中断。
 
 建议在本地控制台或维护窗口执行，并提前备份宿主机网络配置。SSH 环境默认延迟网络变更；需要立即应用时使用 `--apply-network-now`。
 
@@ -99,7 +99,7 @@ sudo bash /tmp/linux-router-install.sh uninstall --purge-data
 
 ## 运行架构
 
-项目由两个 systemd 服务组成：普通用户运行的 Web 服务和 root 权限 Agent。Web 服务负责页面、登录和操作提交，Agent 通过 Unix Socket 执行白名单内的系统查询和网络变更。
+项目由两个 systemd 服务组成：普通用户运行的 Web 服务和 root 权限 Agent。Web 服务负责页面、登录、CSRF 防护和操作提交，Agent 通过 Unix Socket 执行白名单内的系统查询和网络变更。
 
 网络变更由 Agent 串行执行，完成后 Web 页面会查询操作结果并刷新状态。
 

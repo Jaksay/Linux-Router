@@ -17,6 +17,7 @@ from .core import (
     ROUTER_PANEL_SYSCTL_PATH,
     SYSTEM_COMMAND_TIMEOUT,
     atomic_write_text,
+    command_exists,
     file_update_lock,
     is_service_active,
     is_service_enabled,
@@ -49,6 +50,14 @@ def get_netplan_files() -> list[Path]:
 
 
 def get_netplan_renderer_summary() -> dict[str, Any]:
+    if not command_exists("netplan"):
+        return {
+            "ok": True,
+            "level": "ok",
+            "summary": "系统未安装 netplan，跳过 renderer 检查",
+            "details": [],
+        }
+
     files = get_netplan_files()
     if not files:
         return {
@@ -239,6 +248,9 @@ def _netplan_with_networkmanager_renderer(content: str) -> tuple[str, bool]:
 
 
 def ensure_netplan_networkmanager_renderer() -> CommandResult:
+    if not command_exists("netplan"):
+        return CommandResult(True, "系统未安装 netplan，已跳过 netplan 配置")
+
     NETPLAN_DIR.mkdir(parents=True, exist_ok=True)
     target = NETPLAN_DIR / "90-linux-router.yaml"
     content = (
@@ -267,6 +279,9 @@ def ensure_netplan_networkmanager_renderer() -> CommandResult:
 
 
 def apply_netplan() -> CommandResult:
+    if not command_exists("netplan"):
+        return CommandResult(True, "系统未安装 netplan，已跳过 netplan apply")
+
     generate = run_command(["netplan", "generate"], timeout=SYSTEM_COMMAND_TIMEOUT)
     if not generate.ok:
         return generate
@@ -309,7 +324,7 @@ def _rollback_network_configuration(
     restart_networkmanager: bool = True,
 ) -> str:
     errors = _restore_network_configuration(snapshot)
-    if apply_netplan_config:
+    if apply_netplan_config and command_exists("netplan"):
         generated = run_command(["netplan", "generate"], timeout=SYSTEM_COMMAND_TIMEOUT)
         if not generated.ok:
             errors.append(generated.output or "netplan generate 失败")
@@ -523,6 +538,7 @@ def get_dependency_rows() -> list[dict[str, Any]]:
                 "level": hotspot_nat["level"],
                 "detail": "共享上游网络连接",
                 "extra_details": [hotspot_nat["details"]] if hotspot_nat["details"] else [],
+                "extra_details_mono": hotspot_nat["level"] == "ok",
                 "action": "",
                 "action_label": "",
             },

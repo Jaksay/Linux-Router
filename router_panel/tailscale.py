@@ -16,6 +16,35 @@ DEFAULT_TAILSCALE_CONFIG = {
 }
 
 
+def describe_tailscale_state(
+    *,
+    installed: bool,
+    service_active: bool,
+    backend_state: str = "",
+    logged_in: bool = False,
+    status_error: bool = False,
+) -> dict[str, str]:
+    if not installed:
+        return {"state_label": "未安装", "state_level": "warning"}
+    if not service_active:
+        return {"state_label": "未运行", "state_level": "error"}
+    if status_error:
+        return {"state_label": "状态异常", "state_level": "error"}
+    if logged_in:
+        return {"state_label": "已连接", "state_level": "ok"}
+
+    state_labels = {
+        "NeedsLogin": "待登录",
+        "Stopped": "已停止",
+        "Starting": "启动中",
+        "NoState": "未初始化",
+    }
+    return {
+        "state_label": state_labels.get(backend_state) or backend_state or "未登录",
+        "state_level": "warning",
+    }
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -93,6 +122,7 @@ def gather_tailscale_status() -> dict[str, Any]:
             "installed": False,
             "service_active": False,
             "logged_in": False,
+            **describe_tailscale_state(installed=False, service_active=False),
             "backend_state": "",
             "tailscale_ips": [],
             "self_name": "",
@@ -108,6 +138,11 @@ def gather_tailscale_status() -> dict[str, Any]:
             "installed": True,
             "service_active": service_active,
             "logged_in": False,
+            **describe_tailscale_state(
+                installed=True,
+                service_active=service_active,
+                status_error=True,
+            ),
             "backend_state": "",
             "tailscale_ips": [],
             "self_name": "",
@@ -123,6 +158,11 @@ def gather_tailscale_status() -> dict[str, Any]:
             "installed": True,
             "service_active": service_active,
             "logged_in": False,
+            **describe_tailscale_state(
+                installed=True,
+                service_active=service_active,
+                status_error=True,
+            ),
             "backend_state": "",
             "tailscale_ips": [],
             "self_name": "",
@@ -146,6 +186,12 @@ def gather_tailscale_status() -> dict[str, Any]:
         "installed": True,
         "service_active": service_active,
         "logged_in": logged_in,
+        **describe_tailscale_state(
+            installed=True,
+            service_active=service_active,
+            backend_state=backend_state,
+            logged_in=logged_in,
+        ),
         "backend_state": backend_state,
         "tailscale_ips": tailscale_ips,
         "self_name": str(self_node.get("DNSName") or self_node.get("HostName") or ""),

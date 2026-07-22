@@ -4,7 +4,7 @@
 {% block content %}
 <section class="page-header">
   <h2 class="section-title"><span>无线</span></h2>
-  <p class="muted">按无线网卡分别展示扫描连接、当前连接和已保存网络</p>
+  <p class="muted">扫描/加入无线网络，管理已保存网络</p>
 </section>
 
 <section class="card-grid">
@@ -21,8 +21,8 @@
   <div class="modal-panel wifi-modal-panel">
     <div class="modal-header">
       <div>
-        <h3>扫描并连接 Wi‑Fi</h3>
-        <p class="muted">扫描附近无线网络，并连接到指定的 Wi‑Fi</p>
+        <h3>扫描/加入无线网络</h3>
+        <p class="muted">扫描附近无线网络，并连接到指定网络</p>
       </div>
       <button type="button" class="modal-close-button" id="close-wifi-modal-button" aria-label="关闭">{{ icon("x", 18) }}</button>
     </div>
@@ -37,14 +37,14 @@
 
     <div class="wifi-layout">
       <section class="device-card wifi-network-panel">
-        <h4>可用网络</h4>
+        <h4>扫描到的网络</h4>
         <div class="wifi-network-scroll" id="wifi-modal-list">
         {% include "partials/wifi_networks.html" %}
         </div>
       </section>
 
       <section class="device-card">
-        <h4>连接 Wi‑Fi</h4>
+        <h4>加入无线网络</h4>
         <form action="{{ url_for('wifi_connect') }}" method="post" class="login-form" id="wifi-connect-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="ifname" value="{{ status.wifi_scan_device }}">
@@ -81,7 +81,7 @@
               inputmode="text"
             >
           </label>
-          <button type="submit" id="wifi-connect-button">连接</button>
+          <button type="submit" id="wifi-connect-button">加入</button>
         </form>
       </section>
     </div>
@@ -222,7 +222,7 @@
       if (type === "connect" && connectButton) {
         connectButton.disabled = pending;
         connectButton.setAttribute("aria-busy", pending ? "true" : "false");
-        connectButton.textContent = pending ? "连接中..." : "连接";
+        connectButton.textContent = pending ? "加入中..." : "加入";
       }
     };
 

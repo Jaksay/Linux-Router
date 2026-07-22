@@ -80,12 +80,6 @@ class WifiConnectResult(TypedDict):
     hotspot_profile: dict[str, str]
 
 
-class StatusFragments(TypedDict, total=False):
-    wireless: str
-    errors: str
-    wifi_networks: str
-
-
 __all__ = [
     "WirelessStatus",
     "HotspotSummary",
@@ -94,5 +88,4 @@ __all__ = [
     "HotspotClientsStatus",
     "SystemInfo",
     "WifiConnectResult",
-    "StatusFragments",
 ]

@@ -418,7 +418,10 @@ def _connect_wifi_profile(
     result = run_command(command, timeout=30)
     if (
         not result.ok
-        and "802-11-wireless-security.key-mgmt: property is missing" in result.output
+        and (
+            "802-11-wireless-security.key-mgmt: property is missing" in result.output
+            or "passwords or encryption keys are required" in result.output.lower()
+        )
         and password
     ):
         for profile in get_wifi_connection_profiles(ssid):

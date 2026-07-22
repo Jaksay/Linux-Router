@@ -464,9 +464,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ ${EUID} -eq 0 ]] || die "run this installer as root"
-[[ -d /run/systemd/system ]] || die "systemd is required"
-command -v apt-get >/dev/null 2>&1 || die "only apt-based Debian/Armbian systems are supported"
 [[ -n "$ACTION" ]] || die "specify one command: install, upgrade, or uninstall"
 [[ "$PURGE_DATA" -eq 0 || "$ACTION" == "uninstall" ]] || die "--purge-data requires the uninstall command"
 [[ "$CONFIGURE_NETWORK" -eq 1 || "$ACTION" == "install" ]] || die "--no-network-config is only valid with install"
@@ -494,6 +491,23 @@ done
 [[ ! -e "$INSTALL_DIR" || -d "$INSTALL_DIR" ]] || die "install path exists but is not a directory: $INSTALL_DIR"
 [[ ! -e "$DATA_DIR" || -d "$DATA_DIR" ]] || die "data path exists but is not a directory: $DATA_DIR"
 
+if [[ "$ACTION" == "install" ]]; then
+  [[ ! -e "$INSTALL_DIR" ]] || die "an installation already exists at $INSTALL_DIR; use upgrade"
+  [[ ! -e "/etc/systemd/system/$SERVICE_NAME" ]] || die "$SERVICE_NAME already exists; use upgrade"
+  [[ ! -e "/etc/systemd/system/$AGENT_SERVICE_NAME" ]] || die "$AGENT_SERVICE_NAME already exists; use upgrade"
+elif [[ "$ACTION" == "upgrade" ]]; then
+  [[ -f "$INSTALL_DIR/app.py" ]] || die "no installation found at $INSTALL_DIR; use install"
+  [[ -f "/etc/systemd/system/$SERVICE_NAME" ]] || die "$SERVICE_NAME is not installed"
+  [[ -f "/etc/systemd/system/$AGENT_SERVICE_NAME" ]] || die "$AGENT_SERVICE_NAME is not installed"
+  [[ -d "$DATA_DIR" ]] || die "application data directory not found: $DATA_DIR"
+  getent passwd "$SERVICE_USER" >/dev/null || die "service user not found: $SERVICE_USER"
+  getent group "$SERVICE_USER" >/dev/null || die "service group not found: $SERVICE_USER"
+fi
+
+[[ ${EUID} -eq 0 ]] || die "run this installer as root"
+[[ -d /run/systemd/system ]] || die "systemd is required"
+command -v apt-get >/dev/null 2>&1 || die "only apt-based Debian/Armbian systems are supported"
+
 if [[ "$ACTION" == "uninstall" && "$PURGE_DATA" -eq 1 ]] && ! should_apply_network_now; then
   die "--purge-data requires --apply-network-now when network changes are deferred"
 fi
@@ -502,19 +516,6 @@ if [[ "$ACTION" == "uninstall" ]]; then
   uninstall_router_panel
   INSTALL_COMMITTED=1
   exit 0
-fi
-
-if [[ "$ACTION" == "install" ]]; then
-  [[ ! -e "$INSTALL_DIR" ]] || die "an installation already exists at $INSTALL_DIR; use upgrade"
-  [[ ! -e "/etc/systemd/system/$SERVICE_NAME" ]] || die "$SERVICE_NAME already exists; use upgrade"
-  [[ ! -e "/etc/systemd/system/$AGENT_SERVICE_NAME" ]] || die "$AGENT_SERVICE_NAME already exists; use upgrade"
-else
-  [[ -f "$INSTALL_DIR/app.py" ]] || die "no installation found at $INSTALL_DIR; use install"
-  [[ -f "/etc/systemd/system/$SERVICE_NAME" ]] || die "$SERVICE_NAME is not installed"
-  [[ -f "/etc/systemd/system/$AGENT_SERVICE_NAME" ]] || die "$AGENT_SERVICE_NAME is not installed"
-  [[ -d "$DATA_DIR" ]] || die "application data directory not found: $DATA_DIR"
-  getent passwd "$SERVICE_USER" >/dev/null || die "service user not found: $SERVICE_USER"
-  getent group "$SERVICE_USER" >/dev/null || die "service group not found: $SERVICE_USER"
 fi
 
 if [[ -z "$ARCHIVE_URL" ]]; then

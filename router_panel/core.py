@@ -664,15 +664,6 @@ def is_service_enabled(service_name: str) -> bool:
     return result.ok and result.output.strip() == "enabled"
 
 
-def get_service_state_label(active: bool, enabled: bool) -> str:
-    if active and enabled:
-        return "运行中，且已开机自启"
-    if active:
-        return "运行中，但未设为开机自启"
-    if enabled:
-        return "未运行，但已设为开机自启"
-    return "未运行，且未设为开机自启"
-
 __all__ = [
     "BASE_DIR",
     "DATA_DIR",
@@ -731,5 +722,4 @@ __all__ = [
     "save_network_config",
     "is_service_active",
     "is_service_enabled",
-    "get_service_state_label",
 ]

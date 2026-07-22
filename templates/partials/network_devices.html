@@ -16,7 +16,7 @@
             {% if device.state == 'unmanaged' %}
             <article class="network-item-card">
               <h4>NetworkManager</h4>
-              <p class="muted compact">当前未交给 NetworkManager 管理，接管后才能扫描连接</p>
+              <p class="muted compact">当前未交给 NetworkManager 管理，接管后才能扫描/加入无线网络</p>
               <div class="device-actions">
                 <button
                   type="button"
@@ -29,7 +29,7 @@
             </article>
             {% else %}
             <article class="network-item-card">
-              <h4>扫描连接</h4>
+              <h4>扫描 / 加入无线网络</h4>
               <div class="device-actions">
                 <button
                   type="button"
@@ -42,11 +42,11 @@
                   {% endif %}
                   data-current-mac="{{ device.wifi_link.mac_address if device.wifi_link else device.hardware.permanent_mac_address }}"
                 >
-                  扫描并连接 Wi‑Fi
+                  扫描 / 加入无线网络
                 </button>
               </div>
               {% if device.saved_networks %}
-              <h5 class="saved-network-title">已保存的网络</h5>
+              <h5 class="saved-network-title">管理已保存网络</h5>
               <div class="saved-network-list">
                 {% for network in device.saved_networks %}
                 <div class="saved-network-row">

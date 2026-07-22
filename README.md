@@ -1,29 +1,29 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-# Linux Router
+<h1>
+  <img src="static/favicon.ico" alt="" width="32" height="32" align="center">
+  Linux Router
+</h1>
 
-## Introduction
+Turn a Debian or Armbian device into a router with a clean Web console for system status, wired networking, Wi-Fi, hotspot sharing, connected clients, and maintenance tools.
 
-Linux Router turns a Debian/Armbian device into a router. It provides a Web interface for managing system status, network configuration, Wi-Fi, hotspot sharing, and connected clients.
-
-The project is built with Flask, NetworkManager, and systemd. System queries and network changes are handled by a dedicated root Agent.
+Linux Router is built with Flask, NetworkManager, and systemd. The Web service runs without elevated privileges, while a dedicated root Agent executes allowlisted system queries and network changes through a Unix socket.
 
 ![Linux Router Web Console](docs/assets/linux-router-web-console.png)
 
-## Features
+## Highlights
 
-- View system information, network interfaces, IP addresses, and active connections
-- Check and repair runtime dependencies and the NetworkManager environment
-- Manage wired and Wi-Fi connections, including scanning, connecting, disconnecting, and forgetting networks
-- Create exclusive AP or concurrent AP+STA hotspots
-- View hotspot clients, DHCP leases, and wireless connection status
-- Configure the hotspot LAN subnet and NetworkManager shared mode
-- Enable hotspot keepalive and automatic recovery after disconnection
-- Change the administrator password and reboot the device
+- System overview with hardware, IP addresses, active connections, storage, memory, and runtime status
+- Dependency checks and guided repair for NetworkManager, dnsmasq, iptables, `iw`, and related tools
+- Wired and Wi-Fi management, including scanning, connecting, disconnecting, profile binding, and forgetting networks
+- Hotspot creation with exclusive AP and supported AP+STA concurrent modes
+- Hotspot client visibility, DHCP leases, wireless signal details, and LAN subnet configuration
+- Hotspot keepalive with automatic recovery after unexpected disconnection
+- Tailscale login helpers, service monitoring controls, password changes, and reboot support
 
 ## Network Change Risks
 
-Initial installation, uninstallation, and network-stack repair modify the host network configuration. These operations may reload NetworkManager, apply netplan, start or stop `dhcpcd`, and remove project hotspot connections or wireless virtual interfaces. Network connectivity may be interrupted.
+Installation, uninstallation, and network-stack repair modify the host network configuration. These operations may reload NetworkManager, apply netplan, start or stop `dhcpcd`, and remove project hotspot connections or wireless virtual interfaces. Network connectivity may be interrupted.
 
 Run installation and uninstallation from a local console or during a maintenance window, and back up the host network configuration first. Over SSH, network changes that could interrupt the current connection are deferred by default. Use `--apply-network-now` when they must be applied immediately.
 
@@ -99,7 +99,7 @@ sudo bash /tmp/linux-router-install.sh uninstall --purge-data
 
 ## Architecture
 
-The project uses two systemd services: a Web service running as the unprivileged `router-panel` user and a root Agent. The Web service handles pages, login, and operation submission. The Agent exposes allowlisted system queries and network changes through a Unix socket.
+The project uses two systemd services: a Web service running as the unprivileged `router-panel` user and a root Agent. The Web service handles pages, login, CSRF protection, and operation submission. The Agent exposes allowlisted system queries and network changes through a Unix socket.
 
 Network changes are executed serially by the Agent. The Web interface queries the operation result and refreshes the relevant status.
 

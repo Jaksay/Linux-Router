@@ -72,6 +72,7 @@ EXPECTED_ROUTES = {
 
 FIXTURES = Path(__file__).parent / "fixtures"
 INSTALL_SCRIPT = Path(__file__).parent.parent / "install.sh"
+AGENT_SERVICE_UNIT = Path(__file__).parent.parent / "router-panel-agent.service"
 
 
 class ApplicationStructureTests(unittest.TestCase):
@@ -80,6 +81,12 @@ class ApplicationStructureTests(unittest.TestCase):
         backup_loop = installer.index('for name in networkmanager.conf netplan.yaml sysctl.conf; do')
         completion_marker = installer.index("printf 'complete=1\\n'")
         self.assertGreater(completion_marker, backup_loop)
+
+    def test_agent_service_restarts_as_keepalive_supervisor(self):
+        unit = AGENT_SERVICE_UNIT.read_text(encoding="utf-8")
+        self.assertIn("StartLimitIntervalSec=0", unit)
+        self.assertIn("Restart=always", unit)
+        self.assertIn("WantedBy=multi-user.target", unit)
 
     def test_installer_exposes_uninstall_modes(self):
         result = subprocess.run(
@@ -547,7 +554,30 @@ class ApplicationStructureTests(unittest.TestCase):
             status = tailscale.gather_tailscale_status()
         self.assertFalse(status["installed"])
         self.assertFalse(status["logged_in"])
+        self.assertEqual(status["state_label"], "未安装")
+        self.assertEqual(status["state_level"], "warning")
         self.assertIn("未安装", status["errors"][0])
+
+    def test_tailscale_status_reports_inactive_service_separately(self):
+        payload = {
+            "BackendState": "NeedsLogin",
+            "Self": {"TailscaleIPs": None},
+            "User": {},
+        }
+        with (
+            patch.object(tailscale, "command_exists", return_value=True),
+            patch.object(tailscale, "is_service_active", return_value=False),
+            patch.object(
+                tailscale,
+                "run_command",
+                return_value=CommandResult(True, json.dumps(payload)),
+            ),
+        ):
+            status = tailscale.gather_tailscale_status()
+        self.assertFalse(status["service_active"])
+        self.assertFalse(status["logged_in"])
+        self.assertEqual(status["state_label"], "未运行")
+        self.assertEqual(status["state_level"], "error")
 
     def test_tailscale_status_handles_missing_ip_list(self):
         payload = {
@@ -568,6 +598,8 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertTrue(status["installed"])
         self.assertFalse(status["logged_in"])
         self.assertEqual(status["tailscale_ips"], [])
+        self.assertEqual(status["state_label"], "待登录")
+        self.assertEqual(status["state_level"], "warning")
 
     def test_tailscale_status_uses_top_level_ip_fallback(self):
         payload = {
@@ -588,6 +620,8 @@ class ApplicationStructureTests(unittest.TestCase):
             status = tailscale.gather_tailscale_status()
         self.assertTrue(status["logged_in"])
         self.assertEqual(status["tailscale_ips"], ["100.64.0.1"])
+        self.assertEqual(status["state_label"], "已连接")
+        self.assertEqual(status["state_level"], "ok")
 
     def test_tailscale_login_requires_installed_binary(self):
         with patch.object(tailscale, "command_exists", return_value=False):
@@ -633,17 +667,21 @@ class ApplicationStructureTests(unittest.TestCase):
 
     def test_service_monitor_normalizes_service_names(self):
         services, error = service_monitor.normalize_service_list(
-            "mosdns, sing-box.service, wg-quick@wg0.service, mosdns.service"
+            "nginx, cron.service, serial-getty@ttyS0.service, nginx.service"
         )
         self.assertIsNone(error)
         self.assertEqual(
             services,
-            ["mosdns.service", "sing-box.service", "wg-quick@wg0.service"],
+            ["nginx.service", "cron.service", "serial-getty@ttyS0.service"],
         )
 
         services, error = service_monitor.normalize_service_list("bad/name.service")
         self.assertEqual(services, [])
         self.assertIn("服务名称无效", error)
+
+        services, error = service_monitor.normalize_service_list("router-panel.service")
+        self.assertEqual(services, [])
+        self.assertIn("不能监控当前面板自身服务", error)
 
     def test_service_monitor_status_reads_configured_services(self):
         with (
@@ -663,15 +701,15 @@ class ApplicationStructureTests(unittest.TestCase):
             ),
         ):
             service_monitor.save_service_monitor_config(
-                {"services": ["mosdns.service", "sing-box.service"]}
+                {"services": ["nginx.service", "cron.service"]}
             )
             status = service_monitor.gather_service_monitor_status()
 
         self.assertEqual(
             status["services"],
             [
-                {"name": "mosdns.service", "status": "active", "level": "ok"},
-                {"name": "sing-box.service", "status": "inactive", "level": "error"},
+                {"name": "nginx.service", "status": "active", "level": "ok"},
+                {"name": "cron.service", "status": "inactive", "level": "error"},
             ],
         )
 
@@ -682,11 +720,11 @@ class ApplicationStructureTests(unittest.TestCase):
             return_value=CommandResult(True, "done"),
         ) as action:
             result = agent_server._execute_service_monitor_action(
-                {"service": "mosdns.service", "action": "restart"}
+                {"service": "nginx.service", "action": "restart"}
             )
 
         self.assertTrue(result["ok"])
-        action.assert_called_once_with("mosdns.service", "restart")
+        action.assert_called_once_with("nginx.service", "restart")
 
     def test_hotspot_keepalive_enable_requires_active_ap(self):
         device = {"device": "wlan0", "type": "wifi"}
@@ -883,14 +921,14 @@ class ApplicationStructureTests(unittest.TestCase):
         ):
             response = client.post(
                 "/tools/services/save",
-                data={"csrf_token": "test-token", "services": "mosdns, sing-box.service"},
+                data={"csrf_token": "test-token", "services": "nginx, cron.service"},
                 headers={"X-Requested-With": "fetch"},
             )
             config = service_monitor.load_service_monitor_config()
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["ok"])
-        self.assertEqual(config["services"], ["mosdns.service", "sing-box.service"])
+        self.assertEqual(config["services"], ["nginx.service", "cron.service"])
 
     def test_wireless_template_disables_exclusive_hotspot_scan(self):
         template = (
@@ -948,6 +986,32 @@ class ApplicationStructureTests(unittest.TestCase):
             patch.object(network_operations, "get_hotspot_profile", return_value={}),
         ):
             result = network_operations.connect_wifi_profile("wlan0", "Test", "secret123", "", "")
+
+        self.assertTrue(result["result"].ok)
+        self.assertEqual(run.call_count, 3)
+        self.assertIn("old-id", run.call_args_list[1].args[0])
+
+    def test_wifi_connect_retries_after_missing_secrets_saved_profile(self):
+        command_results = [
+            CommandResult(
+                False,
+                "Passwords or encryption keys are required to access the wireless network 'HIWIFI_2G'.",
+            ),
+            CommandResult(True, "deleted"),
+            CommandResult(True, "connected"),
+        ]
+        with (
+            patch.object(network_operations, "get_wireless_interface_phy_map", return_value={}),
+            patch.object(network_operations, "get_wireless_phy_capabilities", return_value={}),
+            patch.object(network_operations, "get_hotspot_active_connection_for_parent", return_value={}),
+            patch.object(network_operations, "run_command", side_effect=command_results) as run,
+            patch.object(network_operations, "get_wifi_connection_profiles", return_value=[{"uuid": "old-id"}]),
+            patch.object(network_operations, "get_active_wifi_connection", return_value={"uuid": "new-id"}),
+            patch.object(network_operations, "bind_wifi_profile_to_hardware", return_value=None),
+            patch.object(network_operations, "get_device_status_item", return_value={"state": "connected"}),
+            patch.object(network_operations, "get_hotspot_profile", return_value={}),
+        ):
+            result = network_operations.connect_wifi_profile("wlan0", "HIWIFI_2G", "secret123", "", "")
 
         self.assertTrue(result["result"].ok)
         self.assertEqual(run.call_count, 3)
@@ -1051,7 +1115,10 @@ class ApplicationStructureTests(unittest.TestCase):
     def test_netplan_repair_only_sets_global_renderer(self):
         with tempfile.TemporaryDirectory() as directory:
             netplan_dir = Path(directory)
-            with patch.object(dependencies, "NETPLAN_DIR", netplan_dir):
+            with (
+                patch.object(dependencies, "NETPLAN_DIR", netplan_dir),
+                patch.object(dependencies, "command_exists", return_value=True),
+            ):
                 result = dependencies.ensure_netplan_networkmanager_renderer()
 
             self.assertTrue(result.ok)
@@ -1078,7 +1145,10 @@ class ApplicationStructureTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(dependencies, "NETPLAN_DIR", netplan_dir):
+            with (
+                patch.object(dependencies, "NETPLAN_DIR", netplan_dir),
+                patch.object(dependencies, "command_exists", return_value=True),
+            ):
                 result = dependencies.ensure_netplan_networkmanager_renderer()
                 summary = dependencies.get_netplan_renderer_summary()
 
@@ -1123,6 +1193,7 @@ class ApplicationStructureTests(unittest.TestCase):
                 ),
                 patch.object(dependencies, "is_service_enabled", return_value=False),
                 patch.object(dependencies, "is_service_active", return_value=False),
+                patch.object(dependencies, "command_exists", return_value=True),
                 patch.object(
                     dependencies,
                     "run_command",
@@ -1190,6 +1261,31 @@ class ApplicationStructureTests(unittest.TestCase):
 
         self.assertIs(result, failure)
         run.assert_not_called()
+
+    def test_netplan_missing_is_skipped_without_rollback_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "NetworkManager.conf"
+            original = "[ifupdown]\nmanaged=false\n"
+            path.write_text(original, encoding="utf-8")
+            snapshot = {path: (original, 0o644)}
+
+            with (
+                patch.object(dependencies, "command_exists", return_value=False),
+                patch.object(dependencies, "run_command") as run,
+            ):
+                summary = dependencies.get_netplan_renderer_summary()
+                apply_result = dependencies.apply_netplan()
+                rollback_error = dependencies._rollback_network_configuration(
+                    snapshot,
+                    apply_netplan_config=True,
+                    restart_networkmanager=False,
+                )
+
+            self.assertTrue(summary["ok"])
+            self.assertTrue(apply_result.ok)
+            self.assertEqual(rollback_error, "")
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            run.assert_not_called()
 
     def test_ip_forward_repair_restores_file_and_runtime_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:

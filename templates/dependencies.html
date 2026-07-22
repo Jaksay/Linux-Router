@@ -35,7 +35,7 @@
             <td data-label="详情">
               <div>{{ row.detail }}</div>
               {% if row.extra_details %}
-                <div class="dependency-extra-list muted mono-value">
+                <div class="dependency-extra-list muted{% if row.extra_details_mono|default(true) %} mono-value{% endif %}">
                   {% for item in row.extra_details %}
                   <div>{{ item }}</div>
                   {% endfor %}
