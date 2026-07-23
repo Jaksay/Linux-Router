@@ -118,6 +118,10 @@ sudo bash /tmp/linux-router-install.sh uninstall --purge-data
 
 首次登录后请立即修改密码。密码哈希、Flask 密钥、LAN 配置和热点保活配置均保存在数据目录，不应提交到 Git 仓库。
 
+## 开源协议
+
+Linux Router 使用 GNU General Public License v3.0 or later 授权。允许商用，但分发修改版时必须以同一协议提供对应源码。详见 [LICENSE](LICENSE)。
+
 ## 开发
 
 开发环境需要先启动 root Agent，再启动 Web 服务：

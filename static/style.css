@@ -398,6 +398,40 @@ button[aria-disabled="true"] {
   justify-self: start;
 }
 
+.settings-footer {
+  width: min(720px, 100%);
+  margin-top: 18px;
+}
+
+.settings-build-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  line-height: 1;
+}
+
+.settings-build-item,
+.settings-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+}
+
+.settings-footer-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.settings-footer-link:hover {
+  text-decoration: underline;
+}
+
+.settings-footer-icon {
+  opacity: 0.8;
+}
+
 .tools-card-list {
   width: min(960px, 100%);
 }

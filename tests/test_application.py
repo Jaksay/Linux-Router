@@ -173,6 +173,23 @@ class ApplicationStructureTests(unittest.TestCase):
         for template_name in application.app.jinja_env.list_templates():
             application.app.jinja_env.get_template(template_name)
 
+    def test_settings_page_includes_build_footer(self):
+        client = application.app.test_client()
+        with client.session_transaction() as session:
+            session["logged_in"] = True
+            session["username"] = "admin"
+
+        with tempfile.TemporaryDirectory() as directory:
+            build_info_path = Path(directory) / "BUILD_INFO"
+            build_info_path.write_text("branch=dev\nbuild=67c4ce5\n", encoding="utf-8")
+            with patch.object(core, "BUILD_INFO_PATH", build_info_path):
+                response = client.get("/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Branch dev", response.data)
+        self.assertIn(b"Build 67c4ce5", response.data)
+        self.assertIn(b"https://github.com/Jaksay/Linux-Router", response.data)
+
     def test_csrf_rejects_missing_token_and_accepts_valid_token(self):
         client = application.app.test_client()
         page = client.get("/login")

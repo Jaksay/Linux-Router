@@ -61,4 +61,25 @@
     </form>
   </article>
 </section>
+
+<footer class="settings-footer">
+  <p class="muted settings-build-line">
+    <span class="settings-build-item">
+      {{ icon("git-branch", 14, "settings-footer-icon") }}
+      <span>Branch {{ build_info.branch }}</span>
+    </span>
+    <span aria-hidden="true">·</span>
+    <span>Build {{ build_info.build }}</span>
+    <span aria-hidden="true">·</span>
+    <a
+      href="https://github.com/Jaksay/Linux-Router"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="settings-footer-link"
+    >
+      {{ icon("github", 14, "settings-footer-icon") }}
+      <span>GitHub</span>
+    </a>
+  </p>
+</footer>
 {% endblock %}

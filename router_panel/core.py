@@ -24,6 +24,7 @@ AUTH_PATH = DATA_DIR / "auth.json"
 NETWORK_CONFIG_PATH = DATA_DIR / "network.json"
 PASSWORD_HINT_PATH = DATA_DIR / "initial_password.txt"
 SECRET_KEY_PATH = DATA_DIR / "secret_key"
+BUILD_INFO_PATH = BASE_DIR / "BUILD_INFO"
 HOTSPOT_CONNECTION_NAME = "DebianRouterHotspot"
 HOTSPOT_DEFAULT_SSID = "DebianRouter"
 HOTSPOT_VIRTUAL_INTERFACE_PREFIX = "ap-"
@@ -654,6 +655,24 @@ def save_network_config(lan_network: IPv4Network) -> None:
     )
 
 
+def get_build_info() -> dict[str, str]:
+    info = {"branch": "unknown", "build": "unknown"}
+    try:
+        raw_lines = BUILD_INFO_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return info
+
+    for line in raw_lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key in info and value:
+            info[key] = value
+    return info
+
+
 def is_service_active(service_name: str) -> bool:
     result = run_command(["systemctl", "is-active", service_name], timeout=5)
     return result.ok and result.output.strip() == "active"
@@ -671,6 +690,7 @@ __all__ = [
     "NETWORK_CONFIG_PATH",
     "PASSWORD_HINT_PATH",
     "SECRET_KEY_PATH",
+    "BUILD_INFO_PATH",
     "HOTSPOT_CONNECTION_NAME",
     "HOTSPOT_DEFAULT_SSID",
     "HOTSPOT_VIRTUAL_INTERFACE_PREFIX",
@@ -720,6 +740,7 @@ __all__ = [
     "normalize_lan_network",
     "load_network_config",
     "save_network_config",
+    "get_build_info",
     "is_service_active",
     "is_service_enabled",
 ]

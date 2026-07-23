@@ -118,6 +118,10 @@ The initial password is also saved to:
 
 Change the password immediately after the first login. Password hashes, the Flask secret key, LAN configuration, and hotspot keepalive configuration are stored in the data directory and must not be committed to Git.
 
+## License
+
+Linux Router is licensed under the GNU General Public License v3.0 or later. Commercial use is allowed, but distributed modified versions must provide corresponding source code under the same license. See [LICENSE](LICENSE).
+
 ## Development
 
 Start the root Agent before starting the Web service:

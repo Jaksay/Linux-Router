@@ -546,6 +546,17 @@ else
   done
 fi
 
+log "Resolving $BRANCH branch build"
+REPO_PATH="${REPO_URL#https://github.com/}"
+REPO_PATH="${REPO_PATH%.git}"
+REF_JSON="$(curl --fail --location --silent --show-error --retry 3 \
+  "https://api.github.com/repos/$REPO_PATH/git/ref/heads/$BRANCH")" || \
+  die "could not resolve branch: $BRANCH"
+REMOTE_COMMIT="$(REF_JSON="$REF_JSON" python3 -c 'import json, os; print(json.loads(os.environ["REF_JSON"])["object"]["sha"])')" || \
+  die "could not parse branch metadata: $BRANCH"
+[[ -n "$REMOTE_COMMIT" ]] || die "could not resolve branch: $BRANCH"
+BUILD_ID="${REMOTE_COMMIT:0:7}"
+
 log "Downloading application archive"
 WORK_DIR="$(mktemp -d /tmp/linux-router-install.XXXXXX)"
 install -d -m 0755 "$WORK_DIR/source"
@@ -595,6 +606,7 @@ BACKUP_DIR="${INSTALL_DIR}.previous"
 rm -rf "$STAGING_DIR" "$BACKUP_DIR"
 install -d -m 0755 "$STAGING_DIR"
 cp -a "$WORK_DIR/source/." "$STAGING_DIR/"
+printf 'branch=%s\nbuild=%s\n' "$BRANCH" "$BUILD_ID" > "$STAGING_DIR/BUILD_INFO"
 chown -R root:root "$STAGING_DIR"
 
 # Runtime secrets always live in DATA_DIR, never in downloaded application files.
