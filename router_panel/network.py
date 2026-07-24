@@ -92,8 +92,8 @@ def get_wireless_phy_capabilities() -> dict[str, dict[str, Any]]:
                     "max_channels": None,
                     "same_channel_only": False,
                     "ap_sta_mode": "unknown",
-                    "ap_sta_label": "未知",
-                    "ap_sta_description": "驱动未提供足够的 AP 与 STA 并发限制信息",
+                    "ap_sta_label": "能力未知",
+                    "ap_sta_description": "驱动没有声明完整的 AP+STA 并发限制，实际表现取决于网卡和驱动",
                 },
             }
             section = ""
@@ -130,8 +130,8 @@ def get_wireless_phy_capabilities() -> dict[str, dict[str, Any]]:
                 "max_channels": None,
                 "same_channel_only": False,
                 "ap_sta_mode": "unknown",
-                "ap_sta_label": "未知",
-                "ap_sta_description": "驱动未提供足够的 AP 与 STA 并发限制信息",
+                "ap_sta_label": "能力未知",
+                "ap_sta_description": "驱动没有声明完整的 AP+STA 并发限制，实际表现取决于网卡和驱动",
             }
             section = ""
             continue
@@ -183,25 +183,32 @@ def build_hotspot_frequency_settings(
     concurrency = phy_capability.get("concurrency", {})
     concurrency_info = {
         "mode": concurrency.get("ap_sta_mode", "unknown"),
-        "label": concurrency.get("ap_sta_label", "未知"),
-        "description": concurrency.get("ap_sta_description", "驱动未提供足够的 AP 与 STA 并发限制信息"),
+        "label": concurrency.get("ap_sta_label", "能力未知"),
+        "description": concurrency.get(
+            "ap_sta_description",
+            "驱动没有声明完整的 AP+STA 并发限制，实际表现取决于网卡和驱动",
+        ),
     }
     available_modes = [
         {
             "value": "exclusive",
-            "label": "独占 AP",
-            "description": "直接切换当前无线接口为热点，当前 Wi-Fi 连接会断开",
+            "label": "独占 AP（独占无线接口）",
+            "description": "使用该无线接口开启热点；如正在连接 Wi-Fi，该连接会被关闭",
         }
     ]
     if concurrency_info["mode"] in {"same_frequency", "cross_frequency"}:
         available_modes.append(
             {
                 "value": "concurrent",
-                "label": "并发 AP+STA",
-                "description": (
-                    "保留当前 Wi-Fi 连接并额外创建热点"
+                "label": (
+                    "并发 AP+STA（独立信道）"
                     if concurrency_info["mode"] == "cross_frequency"
-                    else "保留当前 Wi-Fi 连接，但热点必须与 STA 共用同一信道"
+                    else "并发 AP+STA（同频同信道）"
+                ),
+                "description": (
+                    "同时连接 Wi-Fi 和开启热点，热点可使用独立频段或信道"
+                    if concurrency_info["mode"] == "cross_frequency"
+                    else "同时连接 Wi-Fi 和开启热点，热点与 Wi-Fi 使用相同频段和信道"
                 ),
             }
         )
@@ -244,11 +251,13 @@ def build_hotspot_frequency_settings(
                 continue
             if channel_value in known_channels:
                 continue
+            is_dfs = bool(channel.get("radar"))
             band_entry["channels"].append(
                 {
                     "value": channel_value,
-                    "label": f"信道 {channel_value}",
+                    "label": f"信道 {channel_value} - DFS" if is_dfs else f"信道 {channel_value}",
                     "frequency": channel.get("frequency_label", ""),
+                    "dfs": is_dfs,
                 }
             )
             known_channels.add(channel_value)
@@ -286,9 +295,12 @@ def build_hotspot_frequency_settings(
     locked = False
     note = ""
     mode_notes = {
-        "exclusive": "独占 AP 模式会断开当前无线连接，并将当前网卡直接切换为热点",
+        "exclusive": available_modes[0]["description"],
         "concurrent": "",
     }
+    concurrent_mode = next((item for item in available_modes if item["value"] == "concurrent"), None)
+    if concurrent_mode:
+        mode_notes["concurrent"] = concurrent_mode["description"]
     current_link = device.get("wifi_link") or {}
     current_ssid = current_link.get("ssid", "").strip()
 
@@ -324,16 +336,9 @@ def build_hotspot_frequency_settings(
                 selected_band = current_band
                 selected_channel = current_channel
                 locked = True
-                mode_notes["concurrent"] = f"并发模式将固定使用 {current_link.get('band', '当前频段')} 信道 {current_channel}"
                 if selected_mode == "concurrent":
                     note = mode_notes["concurrent"]
-        elif concurrency_info["mode"] == "cross_frequency":
-            mode_notes["concurrent"] = "并发模式可保留当前 Wi-Fi 连接，并单独启动热点"
-    elif concurrency_info["mode"] == "same_frequency":
-        mode_notes["concurrent"] = "并发模式仅支持同频同信道运行；若之后接入上游 Wi-Fi，热点信道可能需要随之锁定"
-    elif concurrency_info["mode"] == "cross_frequency":
-        mode_notes["concurrent"] = "并发模式支持在保留 STA 的同时额外启动热点"
-    elif concurrency_info["mode"] == "unsupported":
+    if concurrency_info["mode"] == "unsupported":
         mode_notes["concurrent"] = "该网卡不支持并发热点"
 
     bands.sort(key=lambda item: (0 if item["value"] == "bg" else 1, item["label"]))
@@ -350,6 +355,26 @@ def build_hotspot_frequency_settings(
         "selected_mode": selected_mode,
         "mode_notes": mode_notes,
     }
+
+
+def select_hotspot_auto_channel(band_entry: dict[str, Any]) -> str:
+    channels = [
+        item
+        for item in band_entry.get("channels", [])
+        if item.get("value") and not item.get("dfs")
+    ]
+    if not channels:
+        return ""
+
+    preferred_by_band = {
+        "bg": ("6", "1", "11"),
+        "a": ("36", "40", "44", "48", "149", "153", "157", "161", "165"),
+    }
+    by_value = {str(item.get("value", "")): item for item in channels}
+    for channel in preferred_by_band.get(str(band_entry.get("value", "")), ()):
+        if channel in by_value:
+            return channel
+    return str(channels[0].get("value", ""))
 
 
 def get_hotspot_device_settings(ifname: str) -> dict[str, Any]:
@@ -370,6 +395,13 @@ def get_hotspot_device_settings(ifname: str) -> dict[str, Any]:
         phy_capability,
         hotspot_profile,
     )
+    unavailable_reason = get_hotspot_unavailable_reason(device)
+    if unavailable_reason:
+        device["frequency_settings"] = {
+            **device["frequency_settings"],
+            "available": False,
+            "reason": unavailable_reason,
+        }
     return device
 
 
@@ -668,6 +700,30 @@ def get_wifi_client_link(device: dict[str, Any]) -> dict[str, str]:
     return link
 
 
+def get_wifi_scan_unavailable_reason(device: dict[str, Any]) -> str:
+    if device.get("connection") == HOTSPOT_CONNECTION_NAME:
+        return "该网卡正在运行独占 AP，无法扫描 Wi-Fi 网络"
+    state = device.get("state", "").strip()
+    if state == "unmanaged":
+        return "该网卡未交给 NetworkManager 管理，接管后才能扫描或加入无线网络"
+    if state == "unavailable":
+        return (
+            "该网卡当前不可用，请检查 wpasupplicant、Wi-Fi 射频开关、rfkill、驱动和固件"
+        )
+    return ""
+
+
+def get_hotspot_unavailable_reason(device: dict[str, Any]) -> str:
+    state = device.get("state", "").strip()
+    if state == "unmanaged":
+        return "该网卡未交给 NetworkManager 管理，接管后才能开启热点"
+    if state == "unavailable":
+        return (
+            "该网卡当前不可用，请检查 wpasupplicant、Wi-Fi 射频开关、rfkill、驱动和固件"
+        )
+    return ""
+
+
 def enrich_wireless_devices(devices: list[dict[str, str]]) -> list[dict[str, Any]]:
     hardware_map = {
         item.get("name", ""): item
@@ -676,20 +732,22 @@ def enrich_wireless_devices(devices: list[dict[str, str]]) -> list[dict[str, Any
     enriched_devices: list[dict[str, Any]] = []
     for item in sorted(devices, key=lambda value: value.get("device", "")):
         hardware_info = hardware_map.get(item.get("device", ""), {})
-        enriched_devices.append(
-            {
-                **item,
-                "state_label": translate_device_state(item.get("state", "")),
-                "hardware": {
-                    "bus_label": hardware_info.get("bus_label", ""),
-                    "vendor": hardware_info.get("vendor", ""),
-                    "model": hardware_info.get("model", ""),
-                    "driver": hardware_info.get("driver", ""),
-                    "permanent_mac_address": hardware_info.get("permanent_mac_address", ""),
-                },
-                "wifi_link": get_wifi_client_link(item),
-            }
-        )
+        enriched_device = {
+            **item,
+            "state_label": translate_device_state(item.get("state", "")),
+            "hardware": {
+                "bus_label": hardware_info.get("bus_label", ""),
+                "vendor": hardware_info.get("vendor", ""),
+                "model": hardware_info.get("model", ""),
+                "driver": hardware_info.get("driver", ""),
+                "permanent_mac_address": hardware_info.get("permanent_mac_address", ""),
+            },
+            "wifi_link": get_wifi_client_link(item),
+        }
+        unavailable_reason = get_wifi_scan_unavailable_reason(enriched_device)
+        enriched_device["wifi_scan_available"] = not unavailable_reason
+        enriched_device["wifi_scan_unavailable_reason"] = unavailable_reason
+        enriched_devices.append(enriched_device)
     return enriched_devices
 
 
@@ -702,8 +760,16 @@ def get_wireless_scan_device(
     if wifi_scan_device_override:
         for device in wireless_devices:
             if device.get("device") == wifi_scan_device_override:
-                return device
-    return wireless_devices[0]
+                return device if not get_wifi_scan_unavailable_reason(device) else None
+        return None
+    return next(
+        (
+            device
+            for device in wireless_devices
+            if not get_wifi_scan_unavailable_reason(device)
+        ),
+        None,
+    )
 
 
 def attach_saved_wifi_networks(
@@ -868,6 +934,13 @@ def gather_hotspot_status() -> HotspotStatus:
         }
         phy_capability = wireless_phy_capabilities.get(device.get("phy_name", ""), {})
         frequency_settings = build_hotspot_frequency_settings(device, phy_capability, hotspot_profile)
+        unavailable_reason = get_hotspot_unavailable_reason(device)
+        if unavailable_reason:
+            frequency_settings = {
+                **frequency_settings,
+                "available": False,
+                "reason": unavailable_reason,
+            }
         hotspot_connection = hotspot_connections_by_phy.get(device.get("phy_name", ""))
         hotspot_active = hotspot_connection is not None
         hotspot_ifname = hotspot_connection.get("device", "") if hotspot_connection else ""
@@ -917,49 +990,28 @@ def gather_hotspot_status() -> HotspotStatus:
         }
         wireless_devices.append(device)
 
-    wifi_device = get_wireless_scan_device(wireless_devices)
-    hotspot_connection = (
-        hotspot_connections_by_phy.get(wifi_device.get("phy_name", ""))
-        if wifi_device
-        else None
+    summary_device = next(
+        (device for device in wireless_devices if device.get("hotspot", {}).get("active")),
+        wireless_devices[0] if wireless_devices else {},
     )
-    hotspot_active = hotspot_connection is not None
-    hotspot_ifname = hotspot_connection.get("device", "") if hotspot_connection else ""
-    if hotspot_active and hotspot_ifname:
-        hotspot_detail = _get_cached_device_details(hotspot_device_details, hotspot_ifname)
-        hotspot_ip = hotspot_detail["ipv4"][0] if hotspot_detail["ipv4"] else "无"
-        hotspot_radio_status = hotspot_radio_statuses.get(
-            hotspot_ifname,
-            {
-                "frequency": "未知",
-                "channel": hotspot_profile["channel"] or "自动",
-                "band_label": hotspot_band_label(hotspot_profile["band"]),
-            },
-        )
-    else:
-        hotspot_ip = "无"
-        hotspot_radio_status = {
-            "frequency": "未知",
-            "channel": hotspot_profile["channel"] or "自动",
-            "band_label": hotspot_band_label(hotspot_profile["band"]),
-        }
+    summary_hotspot = summary_device.get("hotspot", {})
 
     return {
         "nmcli_available": True,
         "wireless_devices": wireless_devices,
         "hotspot": {
-            "active": hotspot_active,
-            "conflict": hotspot_conflict and not hotspot_active,
+            "active": bool(summary_hotspot.get("active")),
+            "conflict": bool(summary_hotspot.get("conflict")),
             "connection_name": HOTSPOT_CONNECTION_NAME,
-            "ssid": hotspot_profile["ssid"],
-            "password": hotspot_profile["password"],
-            "band": hotspot_profile["band"],
-            "band_label": hotspot_radio_status["band_label"],
-            "channel": hotspot_radio_status["channel"],
-            "ifname": hotspot_ifname or (wifi_device.get("device", "") if wifi_device else ""),
-            "ip": hotspot_ip,
-            "frequency": hotspot_radio_status["frequency"],
-            "mode": "concurrent" if hotspot_ifname and is_hotspot_virtual_interface(hotspot_ifname) else "exclusive",
+            "ssid": summary_hotspot.get("ssid", hotspot_profile["ssid"]),
+            "password": summary_hotspot.get("password", hotspot_profile["password"]),
+            "band": summary_hotspot.get("band", hotspot_profile["band"]),
+            "band_label": summary_hotspot.get("band_label", hotspot_band_label(hotspot_profile["band"])),
+            "channel": summary_hotspot.get("channel", hotspot_profile["channel"] or "自动"),
+            "ifname": summary_hotspot.get("ifname", ""),
+            "ip": summary_hotspot.get("ip", "无"),
+            "frequency": summary_hotspot.get("frequency", "未知"),
+            "mode": summary_hotspot.get("mode", "exclusive"),
         },
         "keepalive": {
             "enabled": bool(keepalive_config),
@@ -1186,6 +1238,63 @@ def default_wired_profile(ifname: str) -> dict[str, Any]:
     }
 
 
+def parse_link_speed_mbps(value: str) -> int:
+    raw = value.strip()
+    if not raw or raw in {"--", "-1"}:
+        return 0
+    try:
+        speed = int(float(raw.split()[0]))
+    except (ValueError, IndexError):
+        return 0
+    return speed if speed > 0 else 0
+
+
+def format_link_speed(value: str) -> str:
+    speed_mbps = parse_link_speed_mbps(value)
+    if not speed_mbps:
+        return "未知"
+    if speed_mbps >= 1000:
+        speed_gbps = speed_mbps / 1000
+        return f"{speed_gbps:g} Gbps"
+    return f"{speed_mbps} Mbps"
+
+
+def get_wired_carrier(ifname: str) -> str:
+    carrier = read_text(f"/sys/class/net/{ifname}/carrier")
+    return carrier if carrier in {"0", "1"} else ""
+
+
+def get_wired_sysfs_speed(ifname: str) -> str:
+    return read_text(f"/sys/class/net/{ifname}/speed")
+
+
+def normalize_wired_state(state: str, carrier: str) -> str:
+    if state == "unavailable" and carrier == "0":
+        return "disconnected"
+    return state
+
+
+def translate_ipv4_method(value: str) -> str:
+    method = value.strip().lower()
+    if method == "manual":
+        return "静态地址"
+    if method in {"auto", "shared"}:
+        return "DHCP"
+    return "未知"
+
+
+def get_wired_ipv4_method_label(connection_name: str) -> str:
+    if not connection_name:
+        return "未知"
+    result = run_command(
+        ["nmcli", "-g", "ipv4.method", "connection", "show", "id", connection_name],
+        timeout=5,
+    )
+    if not result.ok:
+        return "未知"
+    return translate_ipv4_method(result.output)
+
+
 def gather_wired_network_info() -> dict[str, Any]:
     result = run_command(
         [
@@ -1254,16 +1363,22 @@ def gather_wired_network_info() -> dict[str, Any]:
             continue
         ifname = device.get("device", "")
         connection_name = device.get("connection", "")
+        carrier = get_wired_carrier(ifname)
+        state = normalize_wired_state(device.get("state", ""), carrier)
+        speed = "" if carrier == "0" else get_wired_sysfs_speed(ifname)
         profile = default_wired_profile(ifname)
         profile["name"] = connection_name
+        profile["ipv4_method_label"] = get_wired_ipv4_method_label(connection_name)
         devices.append(
             {
                 "device": ifname,
-                "state": device.get("state", ""),
-                "state_label": translate_device_state(device.get("state", "")),
+                "state": state,
+                "state_label": translate_device_state(state),
                 "connection": connection_name or "未连接",
                 "details": {
                     "mac": device.get("mac", ""),
+                    "carrier": carrier,
+                    "link_speed": format_link_speed(speed),
                     "ipv4": device.get("ipv4", []),
                     "gateway": device.get("gateway", ""),
                     "dns": device.get("dns", []),
@@ -1307,11 +1422,14 @@ __all__ = [
     "get_active_wifi_connection",
     "get_saved_wifi_networks",
     "get_wifi_client_link",
+    "get_wifi_scan_unavailable_reason",
+    "get_hotspot_unavailable_reason",
     "enrich_wireless_devices",
     "get_wireless_scan_device",
     "attach_saved_wifi_networks",
     "gather_wireless_network_status",
     "get_hotspot_radio_status",
+    "select_hotspot_auto_channel",
     "gather_hotspot_status",
     "get_current_wifi_link",
     "get_interface_ipv4_neighbors",
@@ -1320,5 +1438,6 @@ __all__ = [
     "gather_hotspot_clients_status",
     "get_wifi_networks",
     "default_wired_profile",
+    "translate_ipv4_method",
     "gather_wired_network_info",
 ]

@@ -1187,6 +1187,57 @@ button[aria-disabled="true"] {
   font-weight: 400;
 }
 
+.operation-progress-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 34px;
+  margin: -2px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--info-line);
+  border-radius: 8px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.operation-progress-message[hidden] {
+  display: none;
+}
+
+.operation-progress-message::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  opacity: 0.8;
+  animation: operation-progress-spin 0.8s linear infinite;
+}
+
+.operation-progress-message span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@keyframes operation-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-progress-message::before {
+    animation: none;
+  }
+}
+
 .login-form input {
   width: 100%;
   padding: 12px 14px;

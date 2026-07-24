@@ -40,10 +40,14 @@ APT_TIMEOUT = 300
 SYSTEM_COMMAND_TIMEOUT = 30
 REQUIRED_PACKAGES = (
     "python3-flask",
+    "gunicorn",
     "network-manager",
     "dnsmasq-base",
+    "iproute2",
     "iptables",
     "iw",
+    "udev",
+    "wpasupplicant",
 )
 
 
@@ -168,6 +172,9 @@ def run_command(
 ) -> CommandResult:
     started_at = time.monotonic()
     command_tuple = tuple(command)
+    command_env = dict(env) if env is not None else os.environ.copy()
+    command_env["LC_ALL"] = "C"
+    command_env.setdefault("LANG", "C")
     try:
         completed = subprocess.run(
             command,
@@ -175,7 +182,7 @@ def run_command(
             text=True,
             check=False,
             timeout=timeout,
-            env=env,
+            env=command_env,
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
@@ -248,6 +255,14 @@ def format_hotspot_error(message: str, ifname: str) -> str:
     normalized = (message or "").strip()
     if not normalized:
         return "开启热点失败"
+    if any(
+        marker in normalized
+        for marker in (
+            "；应用 WPA2 兼容配置失败：",
+            "；WPA2 兼容模式重试失败：",
+        )
+    ):
+        return normalized
 
     lowered = normalized.lower()
     timeout_markers = (

@@ -29,6 +29,7 @@ sudo apt-get install -y \
   iw \
   iproute2 \
   udev \
+  wpasupplicant \
   curl
 ```
 
@@ -39,7 +40,8 @@ sudo apt-get install -y \
 - `dnsmasq-base`：提供 NetworkManager shared 热点所需的 DHCP/DNS 能力；
 - `iptables`：NetworkManager shared 模式使用的系统转发后端；
 - `iw`：读取无线接口、PHY 和 AP+STA 能力；
-- `iproute2`、`udev`：系统网络和硬件信息查询。
+- `iproute2`、`udev`：系统网络和硬件信息查询；
+- `wpasupplicant`：为 NetworkManager 提供 Wi-Fi 扫描、认证和连接后端。
 
 项目不要求目标设备安装 Git。安装器和手动部署都可以使用源码目录或 GitHub 源码压缩包。
 
@@ -235,6 +237,8 @@ $DATA_DIR/hotspot_keepalive.json
 
 热点使用 NetworkManager 的 `ipv4.method shared`，项目不直接维护一套独立的 NAT 规则。启动热点前确认：
 
+热点首先使用 NetworkManager 默认安全参数激活；如果配置已写入但激活失败，会自动改用 WPA2-RSN、CCMP 并关闭 PMF 重试一次。第二次失败时会同时保留两次错误信息。
+
 ```bash
 systemctl is-active NetworkManager.service
 command -v nmcli
@@ -297,6 +301,18 @@ sudo udevadm info -q property -p /sys/class/net/<接口名> | grep NM_UNMANAGED
 ```
 
 确认 NetworkManager 使用 `managed=true`，netplan renderer 为 `NetworkManager`，并且没有其他服务接管同一接口。修改后在维护窗口执行 `netplan generate`、`netplan apply` 和 NetworkManager 重启。
+
+### 无线网卡显示为 unavailable
+
+```bash
+dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' wpasupplicant
+nmcli radio wifi
+rfkill list
+ip link show <接口名>
+sudo dmesg | grep -iE 'firmware|wifi|wlan|iwl'
+```
+
+确认 `wpasupplicant` 已完整安装、Wi-Fi 射频已开启、rfkill 未屏蔽设备，并检查内核日志中是否存在驱动或固件加载失败。Intel 无线网卡缺少固件时可安装 `firmware-iwlwifi`；其他芯片应安装与硬件对应的固件包。
 
 ### 热点能连接但无法上网
 

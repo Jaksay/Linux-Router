@@ -223,7 +223,7 @@ class ApplicationStructureTests(unittest.TestCase):
 
     def test_command_result_preserves_process_details(self):
         completed = SimpleNamespace(returncode=7, stdout="partial output\n", stderr="failed\n")
-        with patch.object(core.subprocess, "run", return_value=completed):
+        with patch.object(core.subprocess, "run", return_value=completed) as run:
             result = core.run_command(["example", "--flag"])
 
         self.assertFalse(result.ok)
@@ -233,6 +233,7 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertEqual(result.stderr, "failed")
         self.assertEqual(result.command, ("example", "--flag"))
         self.assertFalse(result.timed_out)
+        self.assertEqual(run.call_args.kwargs["env"]["LC_ALL"], "C")
 
     def test_atomic_write_replaces_content_and_preserves_requested_mode(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -299,10 +300,94 @@ class ApplicationStructureTests(unittest.TestCase):
         settings.assert_called_once_with("wlan0")
         full_status.assert_not_called()
 
+    def test_unavailable_wireless_device_cannot_start_hotspot(self):
+        device = {
+            "device": "wlan0",
+            "phy_name": "phy0",
+            "frequency_settings": {
+                "available": False,
+                "reason": "该网卡当前不可用，请检查 wpasupplicant",
+            },
+        }
+        with (
+            patch.object(agent_server, "get_hotspot_device_settings", return_value=device),
+            patch.object(agent_server, "load_hotspot_keepalive", return_value={}),
+            patch.object(agent_server, "start_hotspot_profile") as start,
+        ):
+            with self.assertRaisesRegex(agent_server.ValidationError, "wpasupplicant"):
+                agent_server._execute_hotspot_start(
+                    {
+                        "ifname": "wlan0",
+                        "ssid": "Hotspot",
+                        "password": "secret123",
+                        "band": "bg",
+                        "channel": "6",
+                        "mode": "exclusive",
+                    }
+                )
+        start.assert_not_called()
+
+    def test_hotspot_start_auto_channel_avoids_dfs(self):
+        device = {
+            "device": "wlan0",
+            "phy_name": "phy0",
+            "frequency_settings": {
+                "available": True,
+                "available_modes": [{"value": "exclusive"}],
+                "locked": False,
+                "bands": [
+                    {
+                        "value": "a",
+                        "channels": [
+                            {"value": "36", "dfs": False},
+                            {"value": "52", "dfs": True},
+                        ],
+                    }
+                ],
+            },
+        }
+        with (
+            patch.object(agent_server, "get_hotspot_device_settings", return_value=device),
+            patch.object(agent_server, "load_hotspot_keepalive", return_value={}),
+            patch.object(agent_server, "is_service_active", return_value=False),
+            patch.object(agent_server, "command_exists", return_value=True),
+            patch.object(agent_server, "delete_inactive_hotspot_profiles", return_value=None),
+            patch.object(
+                agent_server,
+                "start_hotspot_profile",
+                return_value=CommandResult(True, "started"),
+            ) as start,
+        ):
+            result = agent_server._execute_hotspot_start(
+                {
+                    "ifname": "wlan0",
+                    "ssid": "Hotspot",
+                    "password": "secret123",
+                    "band": "a",
+                    "channel": "",
+                    "mode": "exclusive",
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(start.call_args.args[5], "36")
+
     def test_operation_polling_has_deadline(self):
         script = (Path(__file__).parent.parent / "static" / "router-common.js").read_text()
         self.assertIn("operationPollTimeoutMs", script)
         self.assertIn("Date.now() >= deadline", script)
+        self.assertIn("onProgress", script)
+        self.assertIn("progress_message", script)
+
+    def test_hotspot_template_has_progress_message_target(self):
+        template = (Path(__file__).parent.parent / "templates" / "hotspot.html").read_text()
+        self.assertIn('id="hotspot-progress-message"', template)
+        self.assertIn('class="operation-progress-message"', template)
+        self.assertIn("<span></span>", template)
+        self.assertIn("setHotspotProgress", template)
+        stylesheet = (Path(__file__).parent.parent / "static" / "style.css").read_text()
+        self.assertIn("operation-progress-spin", stylesheet)
+        self.assertIn(".operation-progress-message[hidden]", stylesheet)
 
     def test_common_operation_forms_read_action_attribute(self):
         script = (Path(__file__).parent.parent / "static" / "router-common.js").read_text()
@@ -354,6 +439,77 @@ class ApplicationStructureTests(unittest.TestCase):
             {"wired": False, "wireless": False, "hotspot": True},
         )
 
+    def test_wired_status_reports_link_speed_and_unplugged_state(self):
+        nmcli_output = "\n".join(
+            [
+                "GENERAL.DEVICE:eth0",
+                "GENERAL.TYPE:ethernet",
+                "GENERAL.STATE:20 (unavailable)",
+                "GENERAL.CONNECTION:--",
+                "GENERAL.HWADDR:AA:BB:CC:DD:EE:FF",
+                "GENERAL.DEVICE:eth1",
+                "GENERAL.TYPE:ethernet",
+                "GENERAL.STATE:100 (connected)",
+                "GENERAL.CONNECTION:uplink",
+                "GENERAL.HWADDR:AA:BB:CC:DD:EE:00",
+                "IP4.ADDRESS[1]:192.168.1.2/24",
+                "IP4.GATEWAY:192.168.1.1",
+                "IP4.DNS[1]:1.1.1.1",
+            ]
+        )
+
+        def read_sysfs(path):
+            values = {
+                "/sys/class/net/eth0/carrier": "0",
+                "/sys/class/net/eth1/carrier": "1",
+                "/sys/class/net/eth1/speed": "2500",
+            }
+            return values.get(path, "")
+
+        with (
+            patch.object(
+                network,
+                "run_command",
+                side_effect=[
+                    CommandResult(True, nmcli_output),
+                    CommandResult(True, "manual"),
+                ],
+            ) as run_command,
+            patch.object(network, "read_text", side_effect=read_sysfs),
+        ):
+            wired = network.gather_wired_network_info()
+
+        requested_fields = run_command.call_args_list[0].args[0][3]
+        self.assertNotIn("GENERAL.SPEED", requested_fields)
+        eth0, eth1 = wired["devices"]
+        self.assertEqual(eth0["state"], "disconnected")
+        self.assertEqual(eth0["state_label"], "未连接")
+        self.assertEqual(eth0["details"]["carrier"], "0")
+        self.assertEqual(eth0["details"]["link_speed"], "未知")
+        self.assertEqual(eth0["profile"]["ipv4_method_label"], "未知")
+        self.assertEqual(eth1["state"], "connected")
+        self.assertEqual(eth1["details"]["carrier"], "1")
+        self.assertEqual(eth1["details"]["link_speed"], "2.5 Gbps")
+        self.assertEqual(eth1["profile"]["ipv4_method_label"], "静态地址")
+
+    def test_wired_template_shows_negotiated_speed(self):
+        template = (Path(__file__).parent.parent / "templates" / "wired.html").read_text()
+        self.assertIn("协商速率", template)
+        self.assertIn("item.details.link_speed", template)
+        self.assertIn("<dt>模式</dt>", template)
+        self.assertIn("item.profile.ipv4_method_label", template)
+        self.assertIn("<dt>IP</dt>", template)
+        self.assertIn("<dt>网关</dt>", template)
+        self.assertIn("<dt>DNS</dt>", template)
+        self.assertNotIn("当前 IP", template)
+        self.assertNotIn("当前网关", template)
+        self.assertNotIn("当前 DNS", template)
+
+    def test_ipv4_method_labels_are_user_facing(self):
+        self.assertEqual(network.translate_ipv4_method("auto"), "DHCP")
+        self.assertEqual(network.translate_ipv4_method("manual"), "静态地址")
+        self.assertEqual(network.translate_ipv4_method("disabled"), "未知")
+
     def test_nmcli_fixture_preserves_escaped_connection_name(self):
         rows = network_parsers.parse_nmcli_lines(
             (FIXTURES / "nmcli_devices.txt").read_text(),
@@ -361,6 +517,16 @@ class ApplicationStructureTests(unittest.TestCase):
         )
         self.assertEqual(rows[0]["connection"], "Home:Lab")
         self.assertEqual(rows[1]["connection"], "")
+
+    def test_wifi_scan_device_skips_unavailable_interfaces(self):
+        devices = [
+            {"device": "wlan0", "state": "unavailable", "connection": ""},
+            {"device": "wlan1", "state": "disconnected", "connection": ""},
+        ]
+
+        self.assertEqual(network.get_wireless_scan_device(devices), devices[1])
+        self.assertIsNone(network.get_wireless_scan_device(devices, "wlan0"))
+        self.assertEqual(network.get_wireless_scan_device(devices, "wlan1"), devices[1])
 
     def test_iw_phy_fixture_detects_same_channel_ap_sta(self):
         lines = (FIXTURES / "iw_phy.txt").read_text().splitlines()
@@ -372,7 +538,143 @@ class ApplicationStructureTests(unittest.TestCase):
         ]
         self.assertEqual(concurrency["ap_sta_mode"], "same_frequency")
         self.assertTrue(concurrency["same_channel_only"])
+        self.assertEqual(concurrency["ap_sta_label"], "同频同信道")
+        self.assertEqual(
+            concurrency["ap_sta_description"],
+            "AP 与 STA 必须共用当前 Wi-Fi 的频段和信道",
+        )
         self.assertEqual([channel["channel"] for channel in channels], ["1", "11", "149"])
+
+    def test_hotspot_channel_options_mark_dfs_and_skip_unusable_frequencies(self):
+        radar_channel = network_parsers.parse_iw_frequency_line(
+            "* 5260 MHz [52] (22.0 dBm) (radar detection)"
+        )
+        self.assertTrue(radar_channel["radar"])
+
+        settings = network.build_hotspot_frequency_settings(
+            {"device": "wlan0", "wifi_link": {}},
+            {
+                "supported_modes": ["AP"],
+                "concurrency": {"ap_sta_mode": "unsupported"},
+                "bands": [
+                    {
+                        "nmcli_band": "a",
+                        "channels": [
+                            {
+                                "channel": "36",
+                                "disabled": False,
+                                "no_ir": False,
+                                "radar": False,
+                                "frequency_label": "5180 MHz",
+                            },
+                            {
+                                "channel": "52",
+                                "disabled": False,
+                                "no_ir": False,
+                                "radar": True,
+                                "frequency_label": "5260 MHz",
+                            },
+                            {
+                                "channel": "100",
+                                "disabled": False,
+                                "no_ir": True,
+                                "radar": False,
+                                "frequency_label": "5500 MHz",
+                            },
+                            {
+                                "channel": "165",
+                                "disabled": True,
+                                "no_ir": False,
+                                "radar": False,
+                                "frequency_label": "5825 MHz",
+                            },
+                        ],
+                    }
+                ],
+            },
+            {"mode": "exclusive", "band": "a", "channel": ""},
+        )
+
+        self.assertTrue(settings["available"])
+        self.assertEqual(
+            [(item["value"], item["label"], item.get("dfs")) for item in settings["bands"][0]["channels"]],
+            [("36", "信道 36", False), ("52", "信道 52 - DFS", True)],
+        )
+        self.assertEqual(network.select_hotspot_auto_channel(settings["bands"][0]), "36")
+
+    def test_ap_sta_concurrency_labels_are_user_facing(self):
+        cases = [
+            (
+                ["#{ managed } <= 1, #channels <= 1"],
+                "unsupported",
+                "不支持并发",
+                "该无线网卡不能同时连接 Wi-Fi 并开启 AP",
+            ),
+            (
+                ["#{ managed } <= 1, #{ AP } <= 1, #channels <= 2"],
+                "cross_frequency",
+                "跨信道并发",
+                "可在保持上游 Wi-Fi 连接的同时，使用独立信道开启 AP",
+            ),
+            (
+                [],
+                "unknown",
+                "能力未知",
+                "驱动没有声明完整的 AP+STA 并发限制，实际表现取决于网卡和驱动",
+            ),
+        ]
+        for lines, mode, label, description in cases:
+            with self.subTest(mode=mode):
+                concurrency = network_parsers.parse_iw_valid_interface_combinations(lines)
+                self.assertEqual(concurrency["ap_sta_mode"], mode)
+                self.assertEqual(concurrency["ap_sta_label"], label)
+                self.assertEqual(concurrency["ap_sta_description"], description)
+                self.assertFalse(label.endswith("。"))
+                self.assertFalse(description.endswith("。"))
+
+    def test_hotspot_mode_labels_and_notes_are_separated(self):
+        template = (Path(__file__).parent.parent / "templates" / "hotspot.html").read_text()
+        self.assertIn("${escapeHtml(item.label)}</option>", template)
+        self.assertNotIn("item.description ? ` /", template)
+        self.assertIn('class="muted form-hint" id="hotspot-frequency-note"', template)
+        self.assertNotIn("并发方式：", template)
+
+        base_device = {"device": "wlan0", "wifi_link": {}}
+        hotspot_profile = {"mode": "exclusive", "band": "bg", "channel": ""}
+        capability = {
+            "supported_modes": ["AP"],
+            "concurrency": {"ap_sta_mode": "same_frequency"},
+            "bands": [
+                {
+                    "nmcli_band": "bg",
+                    "channels": [
+                        {
+                            "channel": "6",
+                            "disabled": False,
+                            "no_ir": False,
+                            "frequency_label": "2437 MHz",
+                        }
+                    ],
+                }
+            ],
+        }
+        settings = network.build_hotspot_frequency_settings(
+            base_device,
+            capability,
+            hotspot_profile,
+        )
+        self.assertEqual(
+            [item["label"] for item in settings["available_modes"]],
+            ["独占 AP（独占无线接口）", "并发 AP+STA（同频同信道）"],
+        )
+        self.assertEqual(
+            settings["mode_notes"]["exclusive"],
+            "使用该无线接口开启热点；如正在连接 Wi-Fi，该连接会被关闭",
+        )
+        self.assertEqual(
+            settings["mode_notes"]["concurrent"],
+            "同时连接 Wi-Fi 和开启热点，热点与 Wi-Fi 使用相同频段和信道",
+        )
 
     def test_station_fixture_preserves_rate_details(self):
         stations = network_parsers.parse_iw_station_dump(
@@ -415,6 +717,140 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertIs(first, details)
         self.assertIs(second, details)
         load.assert_called_once_with("ap-wlan0")
+
+    def test_hotspot_device_settings_marks_unavailable_device_unavailable(self):
+        capability = {
+            "supported_modes": ["AP"],
+            "bands": [
+                {
+                    "nmcli_band": "bg",
+                    "channels": [
+                        {
+                            "channel": "6",
+                            "disabled": False,
+                            "no_ir": False,
+                            "frequency_label": "2437 MHz",
+                        }
+                    ],
+                }
+            ],
+            "concurrency": {"ap_sta_mode": "unsupported"},
+        }
+        with (
+            patch.object(
+                network,
+                "get_device_status_item",
+                return_value={
+                    "device": "wlan0",
+                    "type": "wifi",
+                    "state": "unavailable",
+                    "connection": "",
+                },
+            ),
+            patch.object(network, "get_wireless_interface_phy_map", return_value={"wlan0": "phy0"}),
+            patch.object(network, "get_wireless_phy_capabilities", return_value={"phy0": capability}),
+            patch.object(
+                network,
+                "get_hotspot_profile",
+                return_value={
+                    "ssid": "Hotspot",
+                    "password": "secret123",
+                    "band": "bg",
+                    "channel": "6",
+                    "interface_name": "wlan0",
+                    "mode": "exclusive",
+                },
+            ),
+            patch.object(network, "get_wifi_client_link", return_value={}),
+        ):
+            settings = network.get_hotspot_device_settings("wlan0")["frequency_settings"]
+
+        self.assertFalse(settings["available"])
+        self.assertIn("wpasupplicant", settings["reason"])
+
+    def test_hotspot_summary_uses_active_device_not_first_wireless_device(self):
+        capability = {
+            "supported_modes": ["AP"],
+            "bands": [
+                {
+                    "nmcli_band": "bg",
+                    "channels": [
+                        {
+                            "channel": "6",
+                            "disabled": False,
+                            "no_ir": False,
+                            "frequency_label": "2437 MHz",
+                        }
+                    ],
+                }
+            ],
+            "concurrency": {"ap_sta_mode": "unsupported"},
+        }
+        with (
+            patch.object(
+                network,
+                "get_filtered_device_status",
+                return_value=(
+                    [
+                        {"device": "wlan0", "type": "wifi", "state": "disconnected", "connection": ""},
+                        {"device": "wlan1", "type": "wifi", "state": "connected", "connection": core.HOTSPOT_CONNECTION_NAME},
+                    ],
+                    [],
+                ),
+            ),
+            patch.object(
+                network,
+                "get_network_interface_hardware",
+                return_value=[
+                    {"name": "wlan0", "permanent_mac_address": "AA:BB:CC:DD:EE:00"},
+                    {"name": "wlan1", "permanent_mac_address": "AA:BB:CC:DD:EE:11"},
+                ],
+            ),
+            patch.object(network, "get_wireless_interface_phy_map", return_value={"wlan0": "phy0", "wlan1": "phy1"}),
+            patch.object(
+                network,
+                "get_wireless_phy_capabilities",
+                return_value={"phy0": capability, "phy1": capability},
+            ),
+            patch.object(
+                network,
+                "get_active_connections",
+                return_value=[
+                    {
+                        "name": core.HOTSPOT_CONNECTION_NAME,
+                        "type": "802-11-wireless",
+                        "device": "wlan1",
+                    }
+                ],
+            ),
+            patch.object(
+                network,
+                "get_hotspot_profile",
+                return_value={
+                    "ssid": "Hotspot",
+                    "password": "secret123",
+                    "band": "bg",
+                    "channel": "6",
+                    "interface_name": "wlan1",
+                    "mode": "exclusive",
+                },
+            ),
+            patch.object(network, "is_service_active", return_value=False),
+            patch.object(
+                network,
+                "get_device_details",
+                side_effect=lambda ifname: {
+                    "ipv4": ["192.168.50.1/24"] if ifname == "wlan1" else [],
+                    "gateway": "",
+                    "dns": [],
+                },
+            ),
+            patch.object(network, "get_current_wifi_link", return_value={}),
+        ):
+            status = network.gather_hotspot_status()
+
+        self.assertTrue(status["hotspot"]["active"])
+        self.assertEqual(status["hotspot"]["ifname"], "wlan1")
 
     def test_wifi_connect_operation_reaches_connected_state(self):
         with (
@@ -504,6 +940,29 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertIn("wireless", payload["fragments"])
         self.assertIn("wifi_networks", payload["fragments"])
 
+    def test_pending_operation_returns_progress_message(self):
+        client = application.app.test_client()
+        with client.session_transaction() as session:
+            session["logged_in"] = True
+            session["username"] = "admin"
+
+        operation_id = "11111111-1111-4111-8111-111111111111"
+        operation = {
+            "id": operation_id,
+            "action": "hotspot_start",
+            "scope": "hotspot",
+            "context": {"ifname": "wlan0"},
+            "status": "running",
+            "progress_message": "正在启动热点",
+            "result": None,
+        }
+        with patch.object(web, "get_operation", return_value=operation):
+            response = client.get(f"/operations/{operation_id}")
+
+        payload = response.get_json()
+        self.assertTrue(payload["pending"])
+        self.assertEqual(payload["progress_message"], "正在启动热点")
+
     def test_agent_registry_does_not_retain_operation_parameters(self):
         registry = agent_server.OperationRegistry()
         operation = registry.create("wifi_connect", "network", {"ifname": "wlan0"})
@@ -512,6 +971,17 @@ class ApplicationStructureTests(unittest.TestCase):
         stored = registry.get(operation["id"])
         self.assertNotIn("params", stored)
         self.assertNotIn("password", repr(stored))
+
+    def test_agent_registry_tracks_and_clears_progress(self):
+        registry = agent_server.OperationRegistry()
+        operation = registry.create("hotspot_start", "hotspot", {"ifname": "wlan0"})
+        registry.update_progress(operation["id"], "正在启动热点")
+        self.assertEqual(
+            registry.get(operation["id"])["progress_message"],
+            "正在启动热点",
+        )
+        registry.finish(operation["id"], {"ok": True, "message": "done"})
+        self.assertEqual(registry.get(operation["id"])["progress_message"], "")
 
     def test_agent_runtime_rejects_unknown_actions(self):
         runtime = agent_server.AgentRuntime()
@@ -767,6 +1237,45 @@ class ApplicationStructureTests(unittest.TestCase):
                 agent_server._execute_wifi_rescan({"ifname": "wlan0"})
         rescan.assert_not_called()
 
+    def test_unavailable_wireless_device_cannot_scan(self):
+        device = {
+            "device": "wlan0",
+            "type": "wifi",
+            "state": "unavailable",
+            "connection": "",
+        }
+        with (
+            patch.object(agent_server, "get_device_status_item", return_value=device),
+            patch.object(agent_server, "rescan_wifi") as rescan,
+        ):
+            with self.assertRaisesRegex(agent_server.ValidationError, "wpasupplicant"):
+                agent_server._execute_wifi_rescan({"ifname": "wlan0"})
+        rescan.assert_not_called()
+
+    def test_unavailable_wireless_device_cannot_connect(self):
+        device = {
+            "device": "wlan0",
+            "type": "wifi",
+            "state": "unavailable",
+            "connection": "",
+        }
+        with (
+            patch.object(agent_server, "get_device_status_item", return_value=device),
+            patch.object(agent_server, "load_hotspot_keepalive", return_value={}),
+            patch.object(agent_server, "connect_wifi_profile") as connect,
+        ):
+            with self.assertRaisesRegex(agent_server.ValidationError, "wpasupplicant"):
+                agent_server._execute_wifi_connect(
+                    {
+                        "ifname": "wlan0",
+                        "ssid": "Test",
+                        "password": "secret123",
+                        "bssid": "",
+                        "cloned_mac": "",
+                    }
+                )
+        connect.assert_not_called()
+
     def test_protected_hotspot_cannot_be_stopped(self):
         device = {"device": "wlan0", "type": "wifi"}
         config = {
@@ -864,6 +1373,22 @@ class ApplicationStructureTests(unittest.TestCase):
             timeout=core.SYSTEM_COMMAND_TIMEOUT,
         )
 
+    def test_wireless_client_backend_is_a_required_package(self):
+        installer = INSTALL_SCRIPT.read_text()
+
+        self.assertIn("wpasupplicant", core.REQUIRED_PACKAGES)
+        self.assertRegex(installer, r"(?m)^\s+wpasupplicant$")
+
+    def test_runtime_service_packages_are_required_packages(self):
+        installer = INSTALL_SCRIPT.read_text()
+        dependency_source = Path(dependencies.__file__).read_text()
+        runtime_packages = ("gunicorn", "iproute2", "udev")
+
+        for package_name in runtime_packages:
+            self.assertIn(package_name, core.REQUIRED_PACKAGES)
+            self.assertRegex(installer, rf"(?m)^\s+{re.escape(package_name)} \\?$")
+            self.assertIn(f'"{package_name}"', dependency_source)
+
     def test_hotspot_template_exposes_keepalive_controls(self):
         template = (
             Path(__file__).parent.parent / "templates" / "partials" / "hotspot_devices.html"
@@ -947,13 +1472,15 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertTrue(response.get_json()["ok"])
         self.assertEqual(config["services"], ["nginx.service", "cron.service"])
 
-    def test_wireless_template_disables_exclusive_hotspot_scan(self):
+    def test_wireless_template_disables_unavailable_scans(self):
         template = (
             Path(__file__).parent.parent / "templates" / "partials" / "network_devices.html"
         ).read_text()
         network_page = (Path(__file__).parent.parent / "templates" / "network.html").read_text()
-        self.assertIn("data-exclusive-hotspot-scan", template)
-        self.assertIn("该网卡正在运行独占 AP，无法扫描 Wi-Fi 网络", network_page)
+        self.assertIn("device.wifi_scan_available", template)
+        self.assertIn("device.wifi_scan_unavailable_reason", template)
+        self.assertNotIn("data-exclusive-hotspot-scan", template)
+        self.assertNotIn("data-exclusive-hotspot-scan", network_page)
 
     def test_agent_runtime_executes_mutations_with_one_writer(self):
         active = 0
@@ -1034,15 +1561,125 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertEqual(run.call_count, 3)
         self.assertIn("old-id", run.call_args_list[1].args[0])
 
-    def test_exclusive_hotspot_rolls_back_when_lan_setup_fails(self):
+    def _activate_exclusive_hotspot(self, command_results, progress=None):
+        with (
+            patch.object(
+                network_operations,
+                "load_network_config",
+                return_value={"lan_address": "192.168.50.1/24"},
+            ),
+            patch.object(
+                network_operations,
+                "get_interface_permanent_mac",
+                return_value="AA:BB:CC:DD:EE:FF",
+            ),
+            patch.object(
+                network_operations,
+                "run_command",
+                side_effect=command_results,
+            ) as run,
+        ):
+            result = network_operations.activate_hotspot_profile(
+                "wlan0",
+                "Hotspot",
+                "secret123",
+                "a",
+                "149",
+                "exclusive",
+                progress=progress,
+            )
+        return result, run
+
+    def test_hotspot_activation_retries_with_wpa2_compatibility(self):
+        command_results = [
+            CommandResult(True, "deleted"),
+            CommandResult(True, "added"),
+            CommandResult(True, "configured"),
+            CommandResult(False, "opaque activation failure"),
+            CommandResult(True, "compatibility configured"),
+            CommandResult(True, "started"),
+        ]
+        result, run = self._activate_exclusive_hotspot(command_results)
+
+        self.assertTrue(result.ok)
+        default_config = run.call_args_list[2].args[0]
+        compatibility_config = run.call_args_list[4].args[0]
+        self.assertNotIn("wifi-sec.pmf", default_config)
+        for property_name, value in (
+            ("wifi-sec.key-mgmt", "wpa-psk"),
+            ("wifi-sec.proto", "rsn"),
+            ("wifi-sec.pairwise", "ccmp"),
+            ("wifi-sec.group", "ccmp"),
+            ("wifi-sec.pmf", "disable"),
+        ):
+            property_index = compatibility_config.index(property_name)
+            self.assertEqual(compatibility_config[property_index + 1], value)
+        self.assertEqual(run.call_args_list[3].args[0], run.call_args_list[5].args[0])
+
+    def test_hotspot_activation_reports_progress_stages(self):
+        command_results = [
+            CommandResult(True, "deleted"),
+            CommandResult(True, "added"),
+            CommandResult(True, "configured"),
+            CommandResult(False, "opaque activation failure"),
+            CommandResult(True, "compatibility configured"),
+            CommandResult(True, "started"),
+        ]
+        messages: list[str] = []
+        result, _ = self._activate_exclusive_hotspot(command_results, messages.append)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            messages,
+            [
+                "正在写入热点配置",
+                "正在启动热点",
+                "正在应用 WPA2 兼容配置",
+                "正在重试启动热点",
+            ],
+        )
+
+    def test_hotspot_activation_does_not_retry_configuration_failure(self):
+        command_results = [
+            CommandResult(True, "deleted"),
+            CommandResult(True, "added"),
+            CommandResult(False, "invalid profile"),
+        ]
+        result, run = self._activate_exclusive_hotspot(command_results)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.output, "invalid profile")
+        self.assertEqual(run.call_count, 3)
+
+    def test_hotspot_activation_preserves_both_attempt_errors(self):
+        command_results = [
+            CommandResult(True, "deleted"),
+            CommandResult(True, "added"),
+            CommandResult(True, "configured"),
+            CommandResult(False, "hotspot network creation took too long"),
+            CommandResult(True, "compatibility configured"),
+            CommandResult(False, "second failure"),
+        ]
+        result, _ = self._activate_exclusive_hotspot(command_results)
+
+        self.assertFalse(result.ok)
+        self.assertIn("hotspot network creation took too long", result.output)
+        self.assertIn("second failure", result.output)
+        self.assertEqual(core.format_hotspot_error(result.output, "wlan0"), result.output)
+
+    def test_exclusive_hotspot_cleans_up_when_activation_fails(self):
         with (
             patch.object(network_operations, "cleanup_hotspot_virtual_interfaces"),
             patch.object(
                 network_operations,
+                "activate_hotspot_profile",
+                return_value=CommandResult(False, "activation failed"),
+            ) as activate,
+            patch.object(
+                network_operations,
                 "run_command",
-                side_effect=[CommandResult(True, "started"), CommandResult(True, "stopped")],
+                return_value=CommandResult(True, "stopped"),
             ) as run,
-            patch.object(network_operations, "configure_active_hotspot_lan", return_value="LAN 配置失败"),
             patch.object(network_operations, "delete_inactive_hotspot_profiles") as cleanup,
         ):
             result = network_operations.start_hotspot_profile(
@@ -1050,9 +1687,70 @@ class ApplicationStructureTests(unittest.TestCase):
             )
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.output, "LAN 配置失败")
-        self.assertEqual(run.call_count, 2)
+        self.assertIn("activation failed", result.output)
+        activate.assert_called_once_with(
+            "wlan0", "Hotspot", "secret123", "a", "149", "exclusive", progress=None
+        )
+        run.assert_called_once_with(
+            ["nmcli", "connection", "down", "id", core.HOTSPOT_CONNECTION_NAME],
+            timeout=20,
+        )
         cleanup.assert_called_once()
+
+    def test_concurrent_hotspot_cleans_up_virtual_interface_when_activation_fails(self):
+        with (
+            patch.object(
+                network_operations,
+                "ensure_hotspot_virtual_interface",
+                return_value=("ap-wlan0", None),
+            ),
+            patch.object(
+                network_operations,
+                "activate_hotspot_profile",
+                return_value=CommandResult(False, "activation failed"),
+            ) as activate,
+            patch.object(
+                network_operations,
+                "run_command",
+                return_value=CommandResult(True, "stopped"),
+            ),
+            patch.object(network_operations, "delete_inactive_hotspot_profiles") as cleanup,
+            patch.object(network_operations, "delete_hotspot_virtual_interface") as delete_interface,
+        ):
+            result = network_operations.start_hotspot_profile(
+                "wlan0", "phy0", "Hotspot", "secret123", "a", "149", "concurrent"
+            )
+
+        self.assertFalse(result.ok)
+        activate.assert_called_once_with(
+            "ap-wlan0", "Hotspot", "secret123", "a", "149", "concurrent", progress=None
+        )
+        cleanup.assert_called_once()
+        delete_interface.assert_called_once_with("wlan0")
+
+    def test_hotspot_start_reports_interface_progress(self):
+        messages: list[str] = []
+        with (
+            patch.object(network_operations, "cleanup_hotspot_virtual_interfaces"),
+            patch.object(
+                network_operations,
+                "activate_hotspot_profile",
+                return_value=CommandResult(True, "started"),
+            ),
+        ):
+            result = network_operations.start_hotspot_profile(
+                "wlan0",
+                "phy0",
+                "Hotspot",
+                "secret123",
+                "a",
+                "149",
+                "exclusive",
+                progress=messages.append,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(messages, ["正在准备 AP 接口"])
 
     def test_networkmanager_takeover_runs_reload_and_manage(self):
         with (

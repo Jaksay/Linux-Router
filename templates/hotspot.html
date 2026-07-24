@@ -57,6 +57,7 @@
       <label>
         热点模式
         <select name="mode" id="hotspot-mode-input" required></select>
+        <span class="muted form-hint" id="hotspot-frequency-note"></span>
       </label>
       <label>
         频段
@@ -66,7 +67,7 @@
         信道
         <select name="channel" id="hotspot-channel-input"></select>
       </label>
-      <p class="muted compact" id="hotspot-frequency-note"></p>
+      <p class="operation-progress-message" id="hotspot-progress-message" hidden><span></span></p>
       <button type="submit" class="button-info-strong" id="hotspot-start-button">开启 AP 热点</button>
     </form>
   </div>
@@ -111,6 +112,19 @@
 
     const setHotspotFeedback = window.routerFeedback.scoped("hotspot-modal");
     const setPageFeedback = window.routerFeedback.scoped("hotspot-page");
+
+    const setHotspotProgress = (message = "") => {
+      const progress = document.getElementById("hotspot-progress-message");
+      if (!progress) return;
+      const text = String(message || "").trim();
+      const label = progress.querySelector("span");
+      if (label) {
+        label.textContent = text;
+      } else {
+        progress.textContent = text;
+      }
+      progress.hidden = !text;
+    };
 
     const applyHotspotActionResult = (data) => {
       try {
@@ -227,10 +241,6 @@
 
       const hotspot = device?.hotspot || {};
       const frequencySettings = hotspot.frequency_settings || {};
-      const concurrency = frequencySettings.concurrency || null;
-      const concurrencyText = concurrency
-        ? `并发方式：${concurrency.label || "未知"}${concurrency.description ? `；${concurrency.description}` : ""}`
-        : "";
 
       if (hotspot.ssid) ssidInput.value = hotspot.ssid;
       if (hotspot.password) passwordInput.value = hotspot.password;
@@ -242,7 +252,7 @@
         modeInput.disabled = true;
         bandInput.disabled = true;
         channelInput.disabled = true;
-        note.textContent = [concurrencyText, frequencySettings.reason || "当前不能开启热点"].filter(Boolean).join(" ");
+        note.textContent = frequencySettings.reason || "当前不能开启热点";
         startButton.dataset.disabledBySettings = "1";
         startButton.disabled = true;
         startButton.textContent = "当前不可开启";
@@ -251,7 +261,7 @@
 
       modeInput.innerHTML = (frequencySettings.available_modes || []).map((item) => {
         const selected = item.value === frequencySettings.selected_mode ? " selected" : "";
-        return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item.label)}${item.description ? ` / ${escapeHtml(item.description)}` : ""}</option>`;
+        return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item.label)}</option>`;
       }).join("");
       if (!modeInput.value && frequencySettings.selected_mode) {
         modeInput.value = frequencySettings.selected_mode;
@@ -277,7 +287,6 @@
         channelInput.value = "";
       }
       syncHotspotModeState();
-      note.textContent = [concurrencyText, note.textContent].filter(Boolean).join(" ");
     };
 
     const openHotspotModal = (ifname = "") => {
@@ -297,6 +306,7 @@
       modal.classList.add("hidden");
       modal.setAttribute("aria-hidden", "true");
       setHotspotFeedback("");
+      setHotspotProgress("");
     };
 
     const bindHotspotEvents = () => {
@@ -458,17 +468,24 @@
         startForm.addEventListener("submit", async (event) => {
           event.preventDefault();
           setHotspotFeedback("");
+          setHotspotProgress("正在检查热点参数");
           setHotspotPending(true, "start");
           try {
-            const data = await window.routerHttp.postForm(startForm.action, new FormData(startForm));
+            const data = await window.routerHttp.postForm(
+              startForm.action,
+              new FormData(startForm),
+              { onProgress: setHotspotProgress },
+            );
             if (!applyHotspotActionResult(data)) return;
             if (data.ok) {
               closeHotspotModal();
               setPageFeedback(data.message || "热点已开启", "success", 2500);
             } else {
+              setHotspotProgress("");
               setHotspotFeedback(data.message || "开启热点失败", "error");
             }
           } catch {
+            setHotspotProgress("");
             setHotspotFeedback("开启热点失败", "error");
           } finally {
             setHotspotPending(false, "start");

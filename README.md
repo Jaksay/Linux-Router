@@ -14,7 +14,7 @@ Linux Router is built with Flask, NetworkManager, and systemd. The Web service r
 ## Highlights
 
 - System overview with hardware, IP addresses, active connections, storage, memory, and runtime status
-- Dependency checks and guided repair for NetworkManager, dnsmasq, iptables, `iw`, and related tools
+- Dependency checks and guided repair for NetworkManager, wpa_supplicant, dnsmasq, iptables, `iw`, and related tools
 - Wired and Wi-Fi management, including scanning, connecting, disconnecting, profile binding, and forgetting networks
 - Hotspot creation with exclusive AP and supported AP+STA concurrent modes
 - Hotspot client visibility, DHCP leases, wireless signal details, and LAN subnet configuration
@@ -46,7 +46,7 @@ The target system should be Debian 13 or Debian-based Armbian with systemd, apt,
 The installer installs or checks the following main dependencies:
 
 - Python 3, Flask, and Gunicorn
-- NetworkManager
+- NetworkManager and wpa_supplicant
 - dnsmasq-base
 - iptables
 - iw

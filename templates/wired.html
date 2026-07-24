@@ -16,11 +16,11 @@
       </div>
       <dl class="key-value">
         <div><dt>状态</dt><dd class="wired-state-text {{ 'wired-state-connected' if item.state == 'connected' else 'wired-state-disconnected' if item.state == 'disconnected' else '' }}">{{ item.state_label }}</dd></div>
-        <div><dt>配置</dt><dd>{{ item.profile.name or '未创建' }}</dd></div>
-        <div><dt>模式</dt><dd>DHCP 自动获取</dd></div>
+        <div><dt>协商速率</dt><dd class="mono-value">{{ item.details.link_speed or '未知' }}</dd></div>
         <div><dt>MAC</dt><dd class="mono-value">{{ item.details.mac or '未知' }}</dd></div>
+        <div><dt>模式</dt><dd>{{ item.profile.ipv4_method_label or '未知' }}</dd></div>
         <div>
-          <dt>当前 IP</dt>
+          <dt>IP</dt>
           <dd class="mono-value">
             {% if item.details.ipv4 %}
               {% for address in item.details.ipv4 %}{{ address.split('/', 1)[0] }}{% if not loop.last %}, {% endif %}{% endfor %}
@@ -29,8 +29,8 @@
             {% endif %}
           </dd>
         </div>
-        <div><dt>当前网关</dt><dd class="mono-value">{{ item.details.gateway or '无' }}</dd></div>
-        <div><dt>当前 DNS</dt><dd class="mono-value">{{ item.details.dns|join(', ') if item.details.dns else '无' }}</dd></div>
+        <div><dt>网关</dt><dd class="mono-value">{{ item.details.gateway or '无' }}</dd></div>
+        <div><dt>DNS</dt><dd class="mono-value">{{ item.details.dns|join(', ') if item.details.dns else '无' }}</dd></div>
       </dl>
     </article>
     {% endfor %}

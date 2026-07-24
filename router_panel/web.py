@@ -61,6 +61,7 @@ def register_routes(app) -> None:
                 "pending": True,
                 "operation_id": operation["id"],
                 "operation_status": operation["status"],
+                "progress_message": operation.get("progress_message", ""),
             }
 
         response = dict(operation.get("result") or {})

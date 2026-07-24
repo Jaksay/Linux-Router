@@ -2,7 +2,7 @@
   const operationPollTimeoutMs = 6 * 60 * 1000;
 
   window.routerHttp = {
-    async postForm(url, formData) {
+    async postForm(url, formData, options = {}) {
       const response = await fetch(url, {
         method: "POST",
         body: formData,
@@ -29,6 +29,13 @@
           throw new Error(`HTTP ${operationResponse.status}`);
         }
         const operation = await operationResponse.json();
+        if (
+          operation.pending
+          && operation.progress_message
+          && typeof options.onProgress === "function"
+        ) {
+          options.onProgress(operation.progress_message);
+        }
         if (!operation.pending) return operation;
       }
     },

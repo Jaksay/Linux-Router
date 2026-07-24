@@ -539,7 +539,8 @@ if [[ "$ACTION" == "install" ]]; then
     python3 \
     python3-flask \
     tar \
-    udev
+    udev \
+    wpasupplicant
 else
   for command_name in curl tar python3 gunicorn systemd-analyze; do
     command -v "$command_name" >/dev/null 2>&1 || die "required command is missing: $command_name"

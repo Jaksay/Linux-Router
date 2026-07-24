@@ -34,7 +34,9 @@ from .network import (
     get_hotspot_device_settings,
     get_hotspot_active_connection_for_parent,
     get_hotspot_profile,
+    get_wifi_scan_unavailable_reason,
     hotspot_band_label,
+    select_hotspot_auto_channel,
 )
 from .network_operations import (
     configure_hotspot_keepalive,
@@ -72,6 +74,7 @@ MAX_QUEUED_OPERATIONS = 32
 MAX_OPERATION_HISTORY = 500
 _IFNAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 _CHANNEL_RE = re.compile(r"^[0-9]{1,4}$")
+ProgressCallback = Callable[[str], None]
 
 
 class ValidationError(ValueError):
@@ -95,6 +98,7 @@ class OperationRegistry:
             "scope": scope,
             "context": copy.deepcopy(context),
             "status": "queued",
+            "progress_message": "",
             "result": None,
             "created_at": _utc_now(),
             "started_at": None,
@@ -120,6 +124,15 @@ class OperationRegistry:
             operation["status"] = "running"
             operation["started_at"] = _utc_now()
 
+    def update_progress(self, operation_id: str, message: str) -> None:
+        with self._lock:
+            operation = self._operations.get(operation_id)
+            if operation is None:
+                raise ValidationError("找不到该操作")
+            if operation["status"] not in {"queued", "running"}:
+                return
+            operation["progress_message"] = message.strip()[:120]
+
     def finish(self, operation_id: str, result: dict[str, Any]) -> None:
         with self._lock:
             operation = self._operations.get(operation_id)
@@ -127,6 +140,7 @@ class OperationRegistry:
                 raise ValidationError("找不到该操作")
             operation["status"] = "succeeded" if result.get("ok") else "failed"
             operation["result"] = copy.deepcopy(result)
+            operation["progress_message"] = ""
             operation["finished_at"] = _utc_now()
 
     def get(self, operation_id: str) -> dict[str, Any]:
@@ -192,14 +206,18 @@ def _result(result: CommandResult, success_message: str, fallback_error: str) ->
 
 def _execute_wifi_rescan(params: dict[str, Any]) -> dict[str, Any]:
     ifname = _require_wireless_interface(params)
-    if get_device_status_item(ifname).get("connection") == HOTSPOT_CONNECTION_NAME:
-        raise ValidationError("该网卡正在运行独占 AP，无法扫描 Wi-Fi 网络")
+    unavailable_reason = get_wifi_scan_unavailable_reason(get_device_status_item(ifname))
+    if unavailable_reason:
+        raise ValidationError(unavailable_reason)
     return _result(rescan_wifi(ifname), f"已刷新 {ifname} 的 Wi-Fi 列表", "Wi-Fi 扫描失败")
 
 
 def _execute_wifi_connect(params: dict[str, Any]) -> dict[str, Any]:
     ifname = _require_wireless_interface(params)
     _reject_protected_radio(ifname)
+    unavailable_reason = get_wifi_scan_unavailable_reason(get_device_status_item(ifname))
+    if unavailable_reason:
+        raise ValidationError(unavailable_reason)
     ssid = _require_string(params, "ssid", maximum=32)
     password = _require_string(params, "password", maximum=128, strip=False)
     bssid_raw = _require_string(params, "bssid", maximum=17)
@@ -286,7 +304,12 @@ def _execute_wifi_forget(params: dict[str, Any]) -> dict[str, Any]:
     return _result(forget_wifi_profile(profile_uuid), f"已忘记 {name}", f"忘记 {name} 失败")
 
 
-def _execute_hotspot_start(params: dict[str, Any]) -> dict[str, Any]:
+def _execute_hotspot_start(
+    params: dict[str, Any],
+    progress: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    if progress:
+        progress("正在检查热点参数")
     ifname = _require_string(params, "ifname", maximum=15)
     if not _IFNAME_RE.fullmatch(ifname):
         raise ValidationError("无线接口名称无效")
@@ -320,13 +343,20 @@ def _execute_hotspot_start(params: dict[str, Any]) -> dict[str, Any]:
         bands = {item.get("value"): item for item in settings.get("bands", [])}
         if band not in bands:
             raise ValidationError("请选择受支持的热点频段")
-        channels = {item.get("value") for item in bands[band].get("channels", [])}
+        selected_band_entry = bands[band]
+        channels = {item.get("value") for item in selected_band_entry.get("channels", [])}
         if channel and channel not in channels:
             raise ValidationError("请选择受支持的热点信道")
+        if not channel:
+            channel = select_hotspot_auto_channel(selected_band_entry)
+            if not channel:
+                raise ValidationError("当前频段没有可自动选择的非 DFS 信道，请手动指定信道")
     if is_service_active("hostapd"):
         raise ValidationError("检测到 hostapd/RaspAP 正在占用无线网卡，请先停用后再开启热点")
     if not command_exists("dnsmasq"):
         raise ValidationError("系统缺少 dnsmasq，请先安装 dnsmasq-base")
+    if progress:
+        progress("正在清理旧热点配置")
     cleanup_error = delete_inactive_hotspot_profiles()
     if cleanup_error:
         raise ValidationError(cleanup_error)
@@ -339,6 +369,7 @@ def _execute_hotspot_start(params: dict[str, Any]) -> dict[str, Any]:
         band,
         channel,
         mode,
+        progress=progress,
     )
     success = f"已开启并发热点：{ssid}" if mode == "concurrent" else f"已开启热点：{ssid}"
     return _result(result, success, "开启热点失败")
@@ -567,6 +598,21 @@ class AgentRuntime:
                 logging.exception("AP keepalive monitor failed")
             self._monitor_stop.wait(self._monitor_interval)
 
+    def _execute_operation(
+        self,
+        operation_id: str,
+        action: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        if action == "hotspot_start":
+            def progress(message: str) -> None:
+                self.store.update_progress(operation_id, message)
+
+            return _execute_hotspot_start(params, progress)
+
+        operation = OPERATIONS.get(action) or INTERNAL_OPERATIONS[action]
+        return operation(params)
+
     def _run_worker(self) -> None:
         while True:
             operation_id, action, params = self.queue.get()
@@ -574,8 +620,7 @@ class AgentRuntime:
                 self.store.mark_running(operation_id)
                 logging.info("operation started id=%s action=%s", operation_id, action)
                 try:
-                    operation = OPERATIONS.get(action) or INTERNAL_OPERATIONS[action]
-                    result = operation(params)
+                    result = self._execute_operation(operation_id, action, params)
                 except ValidationError as exc:
                     result = {"ok": False, "message": str(exc)}
                 except Exception as exc:

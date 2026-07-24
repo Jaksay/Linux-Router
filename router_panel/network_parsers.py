@@ -160,20 +160,20 @@ def parse_iw_valid_interface_combinations(lines: list[str]) -> dict[str, Any]:
 
     if supports_ap_sta is False:
         ap_sta_mode = "unsupported"
-        ap_sta_label = "完全不支持"
-        ap_sta_description = "驱动未声明 AP 与 STA 可并发运行"
+        ap_sta_label = "不支持并发"
+        ap_sta_description = "该无线网卡不能同时连接 Wi-Fi 并开启 AP"
     elif same_channel_only:
         ap_sta_mode = "same_frequency"
-        ap_sta_label = "同频支持"
-        ap_sta_description = "AP 与 STA 只能共用同一信道，不能跨频/跨信道并发"
+        ap_sta_label = "同频同信道"
+        ap_sta_description = "AP 与 STA 必须共用当前 Wi-Fi 的频段和信道"
     elif supports_ap_sta is True and max_channels and max_channels >= 2:
         ap_sta_mode = "cross_frequency"
-        ap_sta_label = "跨频支持"
-        ap_sta_description = "驱动声明 AP 与 STA 可跨信道并发运行"
+        ap_sta_label = "跨信道并发"
+        ap_sta_description = "可在保持上游 Wi-Fi 连接的同时，使用独立信道开启 AP"
     else:
         ap_sta_mode = "unknown"
-        ap_sta_label = "未知"
-        ap_sta_description = "驱动未提供足够的 AP 与 STA 并发限制信息"
+        ap_sta_label = "能力未知"
+        ap_sta_description = "驱动没有声明完整的 AP+STA 并发限制，实际表现取决于网卡和驱动"
 
     return {
         "declared": bool(lines),

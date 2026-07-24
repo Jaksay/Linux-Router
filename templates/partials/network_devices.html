@@ -16,7 +16,7 @@
             {% if device.state == 'unmanaged' %}
             <article class="network-item-card">
               <h4>NetworkManager</h4>
-              <p class="muted compact">当前未交给 NetworkManager 管理，接管后才能扫描/加入无线网络</p>
+              <p class="muted compact">{{ device.wifi_scan_unavailable_reason }}</p>
               <div class="device-actions">
                 <button
                   type="button"
@@ -30,15 +30,17 @@
             {% else %}
             <article class="network-item-card">
               <h4>扫描 / 加入无线网络</h4>
+              {% if not device.wifi_scan_available %}
+              <p class="muted compact">{{ device.wifi_scan_unavailable_reason }}</p>
+              {% endif %}
               <div class="device-actions">
                 <button
                   type="button"
                   class="button-info-strong"
-                  {% if device.connection == 'DebianRouterHotspot' %}
-                  aria-disabled="true"
-                  data-exclusive-hotspot-scan
-                  {% else %}
+                  {% if device.wifi_scan_available %}
                   data-open-wifi-modal-ifname="{{ device.device }}"
+                  {% else %}
+                  disabled
                   {% endif %}
                   data-current-mac="{{ device.wifi_link.mac_address if device.wifi_link else device.hardware.permanent_mac_address }}"
                 >

@@ -4,6 +4,7 @@ import time
 from configparser import ConfigParser
 from io import StringIO
 from pathlib import Path
+from typing import Callable
 
 from .core import (
     CommandResult,
@@ -33,6 +34,8 @@ from .network import (
     get_wireless_phy_capabilities,
 )
 from .network_parsers import parse_csv_values, parse_nmcli_lines
+
+ProgressCallback = Callable[[str], None]
 
 
 def delete_inactive_hotspot_profiles() -> str | None:
@@ -227,14 +230,23 @@ def activate_hotspot_profile(
     band: str,
     channel: str,
     mode: str,
+    progress: ProgressCallback | None = None,
 ) -> CommandResult:
     lan_address = load_network_config()["lan_address"]
+    permanent_mac = ""
+    if mode == "exclusive":
+        permanent_mac = get_interface_permanent_mac(hotspot_ifname)
+        if not permanent_mac:
+            return CommandResult(False, f"无法读取 {hotspot_ifname} 的永久 MAC 地址")
+
     deleted = run_command(
         ["nmcli", "connection", "delete", "id", HOTSPOT_CONNECTION_NAME], timeout=15
     )
     if not deleted.ok and "unknown connection" not in (deleted.output or "").lower():
         return deleted
 
+    if progress:
+        progress("正在写入热点配置")
     added = run_command(
         [
             "nmcli", "connection", "add", "type", "wifi", "ifname", hotspot_ifname,
@@ -247,12 +259,20 @@ def activate_hotspot_profile(
 
     modify_command = [
         "nmcli", "connection", "modify", HOTSPOT_CONNECTION_NAME,
-        "connection.interface-name", hotspot_ifname, "connection.autoconnect", "yes",
+        "connection.interface-name", "" if mode == "exclusive" else hotspot_ifname,
+        "connection.autoconnect", "yes",
         "connection.autoconnect-priority", "100", "802-11-wireless.mode", "ap",
         "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
         "ipv4.method", "shared", "ipv4.addresses", lan_address,
         "ipv4.link-local", "disabled", "ipv4.gateway", "", "ipv4.dns", "",
     ]
+    if permanent_mac:
+        modify_command.extend(
+            [
+                "802-11-wireless.mac-address", permanent_mac,
+                "802-11-wireless.cloned-mac-address", "permanent",
+            ]
+        )
     if band:
         modify_command.extend(["802-11-wireless.band", band])
     if channel:
@@ -261,86 +281,47 @@ def activate_hotspot_profile(
     if not modified.ok:
         return modified
 
-    up = run_command(["nmcli", "connection", "up", HOTSPOT_CONNECTION_NAME], timeout=40)
-    if (
-        not up.ok
-        and mode == "concurrent"
-        and any(
-            marker in (up.output or "").lower()
-            for marker in (
-                "802.1x supplicant took too long to authenticate",
-                "hotspot network creation took too long",
-            )
-        )
-    ):
-        time.sleep(2)
-        up = run_command(["nmcli", "connection", "up", HOTSPOT_CONNECTION_NAME], timeout=40)
-    return up
+    if progress:
+        progress("正在启动热点")
+    up_command = ["nmcli", "connection", "up", HOTSPOT_CONNECTION_NAME]
+    if mode == "exclusive":
+        up_command.extend(["ifname", hotspot_ifname])
+    first_attempt = run_command(up_command, timeout=40)
+    if first_attempt.ok:
+        return first_attempt
 
-
-def configure_active_hotspot_lan(ifname: str) -> str | None:
-    result = run_command(
-        ["nmcli", "-t", "-f", "NAME,UUID,TYPE,DEVICE", "connection", "show", "--active"]
-    )
-    if not result.ok:
-        return result.output or "无法读取活动热点配置"
-    profile = next(
-        (
-            item
-            for item in parse_nmcli_lines(result.output, ["name", "uuid", "type", "device"])
-            if item.get("name") == HOTSPOT_CONNECTION_NAME
-            and item.get("type") == "802-11-wireless"
-            and item.get("device") == ifname
-        ),
-        None,
-    )
-    if not profile or not profile.get("uuid"):
-        return "找不到刚创建的热点配置"
-
-    profile_uuid = profile["uuid"]
-    permanent_mac = get_interface_permanent_mac(ifname)
-    if not permanent_mac:
-        return f"无法读取 {ifname} 的永久 MAC 地址"
-    lan_address = load_network_config()["lan_address"]
-    modified = run_command(
+    if progress:
+        progress("正在应用 WPA2 兼容配置")
+    compatibility = run_command(
         [
-            "nmcli", "connection", "modify", "uuid", profile_uuid,
-            "connection.interface-name", "", "connection.autoconnect", "yes",
-            "connection.autoconnect-priority", "100",
-            "802-11-wireless.mac-address", permanent_mac,
-            "802-11-wireless.cloned-mac-address", "permanent",
-            "ipv4.method", "shared", "ipv4.addresses", lan_address,
-            "ipv4.link-local", "disabled", "ipv4.gateway", "", "ipv4.dns", "",
+            "nmcli", "connection", "modify", HOTSPOT_CONNECTION_NAME,
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.proto", "rsn",
+            "wifi-sec.pairwise", "ccmp",
+            "wifi-sec.group", "ccmp",
+            "wifi-sec.pmf", "disable",
         ],
         timeout=20,
     )
-    if not modified.ok:
-        return modified.output or "设置 LAN 网段失败"
-    down = run_command(["nmcli", "connection", "down", "uuid", profile_uuid], timeout=20)
-    if not down.ok:
-        return down.output or "应用 LAN 网段时无法重启热点"
-    up = run_command(
-        ["nmcli", "connection", "up", "uuid", profile_uuid, "ifname", ifname],
-        timeout=40,
-    )
-    if (
-        not up.ok
-        and any(
-            marker in (up.output or "").lower()
-            for marker in (
-                "802.1x supplicant took too long to authenticate",
-                "hotspot network creation took too long",
-            )
+    if not compatibility.ok:
+        return CommandResult(
+            False,
+            f"{first_attempt.output or '热点首次激活失败'}；应用 WPA2 兼容配置失败："
+            f"{compatibility.output or '未知错误'}",
         )
-    ):
+
+    if mode == "concurrent":
         time.sleep(2)
-        up = run_command(
-            ["nmcli", "connection", "up", "uuid", profile_uuid, "ifname", ifname],
-            timeout=40,
-        )
-    if not up.ok:
-        return format_hotspot_error(up.output or "应用 LAN 网段后热点重启失败", ifname)
-    return None
+    if progress:
+        progress("正在重试启动热点")
+    fallback_attempt = run_command(up_command, timeout=40)
+    if fallback_attempt.ok:
+        return fallback_attempt
+    return CommandResult(
+        False,
+        f"{first_attempt.output or '热点首次激活失败'}；WPA2 兼容模式重试失败："
+        f"{fallback_attempt.output or '未知错误'}",
+    )
 
 
 def get_networkmanager_config_paths() -> list[Path]:
@@ -494,38 +475,35 @@ def _start_hotspot_profile(
     band: str,
     channel: str,
     mode: str,
+    progress: ProgressCallback | None = None,
 ) -> CommandResult:
+    hotspot_ifname = ifname
+    if progress:
+        progress("正在准备 AP 接口")
     if mode == "concurrent":
         ap_ifname, interface_error = ensure_hotspot_virtual_interface(ifname, phy_name)
         if interface_error:
             return CommandResult(False, interface_error)
-        result = activate_hotspot_profile(ap_ifname, ssid, password, band, channel, mode)
-        if result.ok:
-            return result
-        run_command(["nmcli", "connection", "down", "id", HOTSPOT_CONNECTION_NAME], timeout=20)
-        delete_inactive_hotspot_profiles()
-        delete_hotspot_virtual_interface(ifname)
-        return CommandResult(False, format_hotspot_error(result.output or "开启热点失败", ifname))
+        hotspot_ifname = ap_ifname
+    else:
+        cleanup_hotspot_virtual_interfaces()
 
-    cleanup_hotspot_virtual_interfaces()
-    command = [
-        "nmcli", "device", "wifi", "hotspot", "ifname", ifname,
-        "con-name", HOTSPOT_CONNECTION_NAME, "ssid", ssid, "password", password,
-    ]
-    if band:
-        command.extend(["band", band])
-    if channel:
-        command.extend(["channel", channel])
-    result = run_command(command, timeout=40)
-    if not result.ok:
-        delete_inactive_hotspot_profiles()
-        return CommandResult(False, format_hotspot_error(result.output or "开启热点失败", ifname))
-    lan_error = configure_active_hotspot_lan(ifname)
-    if lan_error:
-        run_command(["nmcli", "connection", "down", "id", HOTSPOT_CONNECTION_NAME], timeout=20)
-        delete_inactive_hotspot_profiles()
-        return CommandResult(False, lan_error)
-    return result
+    result = activate_hotspot_profile(
+        hotspot_ifname,
+        ssid,
+        password,
+        band,
+        channel,
+        mode,
+        progress=progress,
+    )
+    if result.ok:
+        return result
+    run_command(["nmcli", "connection", "down", "id", HOTSPOT_CONNECTION_NAME], timeout=20)
+    delete_inactive_hotspot_profiles()
+    if mode == "concurrent":
+        delete_hotspot_virtual_interface(ifname)
+    return CommandResult(False, format_hotspot_error(result.output or "开启热点失败", ifname))
 
 
 def _stop_hotspot_profile(ifname: str) -> CommandResult:
@@ -579,8 +557,18 @@ def start_hotspot_profile(
     band: str,
     channel: str,
     mode: str,
+    progress: ProgressCallback | None = None,
 ) -> CommandResult:
-    return _start_hotspot_profile(ifname, phy_name, ssid, password, band, channel, mode)
+    return _start_hotspot_profile(
+        ifname,
+        phy_name,
+        ssid,
+        password,
+        band,
+        channel,
+        mode,
+        progress=progress,
+    )
 
 
 def stop_hotspot_profile(ifname: str) -> CommandResult:

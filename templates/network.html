@@ -253,14 +253,6 @@
         });
       });
 
-      document.querySelectorAll("[data-exclusive-hotspot-scan]").forEach((button) => {
-        if (button.dataset.bound) return;
-        button.dataset.bound = "1";
-        button.addEventListener("click", () => {
-          window.alert("该网卡正在运行独占 AP，无法扫描 Wi-Fi 网络");
-        });
-      });
-
       document.querySelectorAll("[data-disconnect-ifname]").forEach((button) => {
         if (button.dataset.bound) return;
         button.dataset.bound = "1";

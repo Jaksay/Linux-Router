@@ -433,10 +433,14 @@ def get_dependency_rows() -> list[dict[str, Any]]:
     hotspot_nat = get_hotspot_nat_status()
     package_details = {
         "python3-flask": "提供网页运行框架",
+        "gunicorn": "运行网页服务",
         "network-manager": "管理系统网络连接",
         "dnsmasq-base": "为热点分配地址",
+        "iproute2": "读取 IP 和路由",
         "iptables": "提供网络转发规则",
         "iw": "读取无线网卡能力",
+        "udev": "读取硬件信息",
+        "wpasupplicant": "扫描并连接无线网络",
     }
 
     rows = [
