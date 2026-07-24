@@ -235,6 +235,27 @@ class ApplicationStructureTests(unittest.TestCase):
         self.assertFalse(result.timed_out)
         self.assertEqual(run.call_args.kwargs["env"]["LC_ALL"], "C")
 
+    def test_cpu_temperature_falls_back_to_hwmon(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            thermal_root = root / "thermal"
+            hwmon_root = root / "hwmon"
+            thermal_zone = thermal_root / "thermal_zone0"
+            hwmon = hwmon_root / "hwmon0"
+            thermal_zone.mkdir(parents=True)
+            hwmon.mkdir(parents=True)
+            (thermal_zone / "type").write_text("thermal\n", encoding="utf-8")
+            (thermal_zone / "temp").write_text("", encoding="utf-8")
+            (hwmon / "name").write_text("k10temp\n", encoding="utf-8")
+            (hwmon / "temp1_label").write_text("Tctl\n", encoding="utf-8")
+            (hwmon / "temp1_input").write_text("42875\n", encoding="utf-8")
+
+            with (
+                patch.object(core, "THERMAL_ROOT", thermal_root),
+                patch.object(core, "HWMON_ROOT", hwmon_root),
+            ):
+                self.assertEqual(core.get_cpu_temperature(), "42.9 °C")
+
     def test_atomic_write_replaces_content_and_preserves_requested_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"

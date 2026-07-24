@@ -33,6 +33,8 @@ NETWORKMANAGER_CONFIG_PATH = Path("/etc/NetworkManager/NetworkManager.conf")
 NETWORKMANAGER_CONF_DIR = Path("/etc/NetworkManager/conf.d")
 NETPLAN_DIR = Path("/etc/netplan")
 ROUTER_PANEL_SYSCTL_PATH = Path("/etc/sysctl.d/90-router-panel.conf")
+THERMAL_ROOT = Path("/sys/class/thermal")
+HWMON_ROOT = Path("/sys/class/hwmon")
 HARDWARE_INFO_CACHE_TTL = 15
 WIRELESS_PHY_CACHE_TTL = 15
 SYSTEM_STATIC_CACHE_TTL = 3600
@@ -353,29 +355,59 @@ def format_bytes(num_bytes: int) -> str:
     return f"{num_bytes} B"
 
 
+def format_temperature(raw_temperature: str) -> str:
+    try:
+        temperature = float(raw_temperature)
+    except ValueError:
+        return ""
+    if abs(temperature) >= 1000:
+        temperature /= 1000
+    if -50 <= temperature <= 200:
+        return f"{temperature:.1f} °C"
+    return ""
+
+
+def temperature_source_priority(label: str) -> int:
+    normalized = label.lower()
+    if any(name in normalized for name in ("cpu", "soc", "package", "coretemp", "k10temp", "zenpower")):
+        return 0
+    return 1
+
+
 def get_cpu_temperature() -> str:
-    thermal_root = Path("/sys/class/thermal")
     candidates: list[tuple[int, Path]] = []
     try:
-        thermal_zones = list(thermal_root.glob("thermal_zone*"))
+        thermal_zones = list(THERMAL_ROOT.glob("thermal_zone*"))
     except OSError:
-        return "未知"
+        thermal_zones = []
 
     for zone in thermal_zones:
         zone_type = read_text(str(zone / "type")).lower()
-        priority = 0 if any(name in zone_type for name in ("cpu", "soc", "package")) else 1
+        priority = temperature_source_priority(zone_type)
         candidates.append((priority, zone))
 
-    for _, zone in sorted(candidates, key=lambda item: (item[0], item[1].name)):
-        raw_temperature = read_text(str(zone / "temp"))
+    try:
+        hwmon_devices = list(HWMON_ROOT.glob("hwmon*"))
+    except OSError:
+        hwmon_devices = []
+
+    for hwmon in hwmon_devices:
+        hwmon_name = read_text(str(hwmon / "name"))
         try:
-            temperature = float(raw_temperature)
-        except ValueError:
-            continue
-        if abs(temperature) >= 1000:
-            temperature /= 1000
-        if -50 <= temperature <= 200:
-            return f"{temperature:.1f} °C"
+            temp_inputs = sorted(hwmon.glob("temp*_input"))
+        except OSError:
+            temp_inputs = []
+        for temp_input in temp_inputs:
+            sensor_id = temp_input.name.removeprefix("temp").removesuffix("_input")
+            label = read_text(str(hwmon / f"temp{sensor_id}_label"))
+            priority = temperature_source_priority(f"{hwmon_name} {label}")
+            candidates.append((priority, temp_input))
+
+    for _, path in sorted(candidates, key=lambda item: (item[0], item[1].name)):
+        raw_temperature = read_text(str(path / "temp" if path.is_dir() else path))
+        formatted = format_temperature(raw_temperature)
+        if formatted:
+            return formatted
     return "未知"
 
 
